@@ -18,7 +18,7 @@ structures. See a [simple mutex] implementation that exposes an async and a bloc
 for acquiring locks.
 
 [eventcounts]: http://www.1024cores.net/home/lock-free-algorithms/eventcounts
-[simple mutex]: TODO
+[simple mutex]: ./examples/mutex.rs
 
 ## Examples
 
