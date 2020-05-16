@@ -1,0 +1,13 @@
+[package]
+name = "event-listener"
+version = "1.0.0"
+authors = ["Stjepan Glavina <stjepang@gmail.com>"]
+edition = "2018"
+description = "Notify async tasks or threads"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/stjepang/event-listener"
+homepage = "https://github.com/stjepang/event-listener"
+documentation = "https://docs.rs/event-listener"
+keywords = ["condvar", "eventcount", "wake", "blocking", "park"]
+categories = ["asynchronous", "concurrency"]
+readme = "README.md"
