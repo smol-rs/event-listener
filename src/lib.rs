@@ -99,6 +99,11 @@ impl Inner {
     }
 }
 
+enum Notify {
+    Some(usize),
+    All,
+}
+
 /// A synchronization primitive for notifying async tasks and threads.
 ///
 /// Listeners can be registered using [`Event::listen()`]. There are two ways of notifying
@@ -207,7 +212,38 @@ impl Event {
         // Notify if no active listeners have been notified and there is at least one listener.
         let flags = inner.flags.load(Ordering::Relaxed);
         if flags & NOTIFIED == 0 && flags & NOTIFIABLE != 0 {
-            inner.lock().notify(false);
+            inner.lock().notify(Notify::Some(1));
+        }
+    }
+
+    /// Notifies up to `n` active listeners.
+    /// 
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    ///
+    /// // This notification gets lost because there are no listeners.
+    /// event.notify_many(2);
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    ///
+    /// // This notifiers both listeners because they are both active.
+    /// event.notify_many(2);
+    /// ```
+    #[inline]
+    pub fn notify_many(&self, n: usize) {
+        let inner = self.inner();
+
+        // Make sure the notification comes after whatever triggered it.
+        full_fence();
+
+        // Notify if there is at least one listener.
+        if inner.flags.load(Ordering::Relaxed) & NOTIFIABLE != 0 {
+            inner.lock().notify(Notify::Some(n));
         }
     }
 
@@ -238,12 +274,13 @@ impl Event {
 
         // Notify if there is at least one listener.
         if inner.flags.load(Ordering::Relaxed) & NOTIFIABLE != 0 {
-            inner.lock().notify(true);
+            inner.lock().notify(Notify::All);
         }
     }
 
     /// Returns a reference to the inner state.
     fn inner(&self) -> &Inner {
+
         let mut inner = self.inner.load(Ordering::Acquire);
 
         // Initialize the state if this is its first use.
@@ -499,7 +536,7 @@ impl Drop for EventListener {
             // But if a notification was delivered to it...
             if list.remove(entry).is_notified() {
                 // Then pass it on to another active listener.
-                list.notify(false);
+                list.notify(Notify::Some(1));
             }
         }
     }
@@ -662,9 +699,9 @@ impl List {
         }
     }
 
-    /// Notifies an entry.
+    /// Notifies up to `limit` entries.
     #[cold]
-    fn notify(&mut self, notify_all: bool) {
+    fn notify(&mut self, mut limit: Notify) {
         let mut entry = self.tail;
 
         // Iterate over the entries in the list.
@@ -688,12 +725,14 @@ impl List {
                 self.notifiable -= 1;
             }
 
-            // If all entries need to be notified, go to the next one.
-            if notify_all {
-                entry = e.prev.get();
-            } else {
-                break;
+            // Decrement the limit
+            match &mut limit {
+                Notify::Some(1) => break,
+                Notify::Some(n) => *n -= 1,
+                Notify::All     => { }
             }
+
+            entry = e.prev.get();
         }
     }
 }
