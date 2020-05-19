@@ -284,6 +284,54 @@ impl Event {
         }
     }
 
+    /// Lock the event to notify multiple listeners.
+    ///
+    /// This API is useful if a client wishes to issue multiple notifications interleaved with
+    /// other operations. This can be useful when a client wishes to notify multiple listeners, but
+    /// fairness would encourage them to perform other operations (such as waking other tasks for a
+    /// different reason) at the same time, rather than doing that before notifying all listeners
+    /// or after.
+    ///
+    /// The lock is held until the `EventLock` guard is dropped, blocking any other threads which
+    /// attempt to register additional listeners. For that reason, users must be cautious not to
+    /// hold the lock for a long period of time.
+    ///
+    /// If there are no active listeners when this is called, the lock will not be acquired.
+    /// 
+    /// # Examples
+    ///
+    /// ```
+    /// # fn call_another_function() { }
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    ///
+    /// // This notifies both listeners, but calls `call_another_function` between notifying
+    /// // `listener` and `listener2`.
+    /// let mut lock = event.lock();
+    /// lock.notify_one();
+    /// call_another_function();
+    /// lock.notify_one();
+    /// ```
+    pub fn lock(&self) -> EventLock<'_> {
+        let inner = self.inner();
+
+        full_fence();
+
+        if inner.flags.load(Ordering::Relaxed) & NOTIFIABLE != 0 {
+            EventLock {
+                inner: Some(inner.lock()),
+            }
+        } else {
+            EventLock {
+                inner: None,
+            }
+        }
+    }
+
     /// Returns a reference to the inner state.
     fn inner(&self) -> &Inner {
 
@@ -545,6 +593,98 @@ impl Drop for EventListener {
                 list.notify(Notify::Some(1));
             }
         }
+    }
+}
+
+/// A locked `Event`.
+///
+/// This type can be constructed by calling the [`Event::lock()`] method. This allows a client to
+/// notify multiple listeners, interleaved with other operations.
+pub struct EventLock<'a> {
+    inner: Option<ListGuard<'a>>,
+}
+
+impl EventLock<'_> {
+    /// Notifies a single active listener.
+    ///
+    /// Note that this does not notify one *additional* listener - it only makes sure *at least*
+    /// one listener among the active ones is notified.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    ///
+    /// // Lock the event, then notify just one of `listener1` and `listener2`.
+    /// //
+    /// // Listener queueing is fair, which means `listener1` gets notified
+    /// // here since it was the first to start listening.
+    /// let mut lock = event.lock();
+    /// lock.notify_one();
+    /// ```
+    #[inline]
+    pub fn notify_one(&mut self) {
+        if let Some(guard) = &mut self.inner {
+            guard.notify(Notify::Some(1))
+        }
+    }
+
+    /// Notifies all active listeners.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    ///
+    /// // Both `listener1` and `listener2` get notified.
+    /// let mut lock = event.lock();
+    /// lock.notify_all();
+    /// ```
+    #[inline]
+    pub fn notify_all(&mut self) {
+        if let Some(guard) = &mut self.inner {
+            guard.notify(Notify::All)
+        }
+    }
+
+
+    /// Notifies up to `n` active listeners.
+    /// 
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    ///
+    /// // This notifiers both listeners.
+    /// let mut lock = event.lock();
+    /// lock.notify(2);
+    /// ```
+    #[inline]
+    pub fn notify(&mut self, n: usize) {
+        if let Some(guard) = &mut self.inner {
+            guard.notify(Notify::Some(n))
+        }
+    }
+}
+
+impl fmt::Debug for EventLock<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad("EventLock { .. }")
     }
 }
 
