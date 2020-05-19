@@ -216,37 +216,6 @@ impl Event {
         }
     }
 
-    /// Notifies up to `n` active listeners.
-    /// 
-    /// # Examples
-    ///
-    /// ```
-    /// use event_listener::Event;
-    ///
-    /// let event = Event::new();
-    ///
-    /// // This notification gets lost because there are no listeners.
-    /// event.notify_many(2);
-    ///
-    /// let listener1 = event.listen();
-    /// let listener2 = event.listen();
-    ///
-    /// // This notifiers both listeners because they are both active.
-    /// event.notify_many(2);
-    /// ```
-    #[inline]
-    pub fn notify_many(&self, n: usize) {
-        let inner = self.inner();
-
-        // Make sure the notification comes after whatever triggered it.
-        full_fence();
-
-        // Notify if there is at least one listener.
-        if inner.flags.load(Ordering::Relaxed) & NOTIFIABLE != 0 {
-            inner.lock().notify(Notify::Some(n));
-        }
-    }
-
     /// Notifies all active listeners.
     ///
     /// # Examples
@@ -275,6 +244,43 @@ impl Event {
         // Notify if there is at least one listener.
         if inner.flags.load(Ordering::Relaxed) & NOTIFIABLE != 0 {
             inner.lock().notify(Notify::All);
+        }
+    }
+
+    /// Notifies up to `n` active listeners.
+    ///
+    /// Calling this method with the argument `1` is equivalent to calling `notify_one`; calling it
+    /// with a number greater than the number of active listeners is equivalent to calling
+    /// `notify_all`. This method is most useful for notifying up to a fixed number of active
+    /// listeners greater than one, regardless of the number of active listeners.
+    /// 
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    ///
+    /// // This notification gets lost because there are no listeners.
+    /// event.notify(2);
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    ///
+    /// // This notifiers both listeners because they are both active.
+    /// event.notify(2);
+    /// ```
+    #[inline]
+    pub fn notify(&self, n: usize) {
+        let inner = self.inner();
+
+        // Make sure the notification comes after whatever triggered it.
+        full_fence();
+
+        // Notify if there is at least one listener.
+        let flags = inner.flags.load(Ordering::Relaxed);
+        if flags & NOTIFIABLE != 0 && (flags & NOTIFIED == 0 || n > 1) {
+            inner.lock().notify(Notify::Some(n));
         }
     }
 
