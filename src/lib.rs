@@ -682,6 +682,7 @@ impl List {
         if notify_all {
             let mut entry = self.tail;
 
+            // Find the last notified entry.
             while let Some(e) = entry {
                 let e = unsafe { e.as_ref() };
                 if e.is_notified() || entry == self.head {
@@ -690,12 +691,14 @@ impl List {
                 entry = e.prev.get();
             }
 
+            // Notify all entries until the end.
             while let Some(e) = entry {
                 let e = unsafe { e.as_ref() };
                 self.set_notified(e);
                 entry = e.next.get();
             }
         } else {
+            // Only need to make sure the first entry is notified.
             if let Some(e) = self.head {
                 let e = unsafe { e.as_ref() };
                 self.set_notified(e);
