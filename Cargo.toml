@@ -11,3 +11,7 @@ documentation = "https://docs.rs/event-listener"
 keywords = ["condvar", "eventcount", "wake", "blocking", "park"]
 categories = ["asynchronous", "concurrency"]
 readme = "README.md"
+
+[dev-dependencies]
+futures = { version = "0.3.5", default-features = false, features = ["std"] }
+waker-fn = "1.0.0"
