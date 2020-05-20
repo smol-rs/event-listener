@@ -588,6 +588,20 @@ struct Entry {
     next: Cell<Option<NonNull<Entry>>>,
 }
 
+impl Entry {
+    /// Returns `true` if this entry has been notified.
+    #[inline]
+    fn is_notified(&self) -> bool {
+        // Do a dummy replace operation in order to take out the state.
+        let state = self.state.replace(State::Notified);
+
+        // Put back the state.
+        let is_notified = state.is_notified();
+        self.state.set(state);
+        is_notified
+    }
+}
+
 /// A linked list of entries.
 struct List {
     /// First entry in the list.
@@ -665,35 +679,50 @@ impl List {
     /// Notifies an entry.
     #[cold]
     fn notify(&mut self, notify_all: bool) {
-        let mut entry = self.tail;
+        if notify_all {
+            let mut entry = self.tail;
 
-        // Iterate over the entries in the list.
-        while let Some(e) = entry {
-            let e = unsafe { e.as_ref() };
-
-            // Set the state of this entry to `Notified`.
-            let state = e.state.replace(State::Notified);
-            let is_notified = state.is_notified();
-
-            // Wake the task or unpark the thread.
-            match state {
-                State::Notified => {}
-                State::Created => {}
-                State::Polling(w) => w.wake(),
-                State::Waiting(t) => t.unpark(),
-            }
-
-            // Update the count of notifiable entries.
-            if !is_notified {
-                self.notifiable -= 1;
-            }
-
-            // If all entries need to be notified, go to the next one.
-            if notify_all {
+            while let Some(e) = entry {
+                let e = unsafe { e.as_ref() };
+                if e.is_notified() || entry == self.head {
+                    break;
+                }
                 entry = e.prev.get();
-            } else {
-                break;
             }
+
+            while let Some(e) = entry {
+                let e = unsafe { e.as_ref() };
+                self.set_notified(e);
+                entry = e.next.get();
+            }
+        } else {
+            if let Some(e) = self.head {
+                let e = unsafe { e.as_ref() };
+                self.set_notified(e);
+            }
+        }
+    }
+
+    /// Notifies an entry and returns `true` if it wasn't notified already.
+    fn set_notified(&mut self, e: &Entry) -> bool {
+        // Set the state of this entry to `Notified`.
+        let state = e.state.replace(State::Notified);
+        let was_notified = state.is_notified();
+
+        // Wake the task or unpark the thread.
+        match state {
+            State::Notified => {}
+            State::Created => {}
+            State::Polling(w) => w.wake(),
+            State::Waiting(t) => t.unpark(),
+        }
+
+        // Update the count of notifiable entries.
+        if !was_notified {
+            self.notifiable -= 1;
+            true
+        } else {
+            false
         }
     }
 }
