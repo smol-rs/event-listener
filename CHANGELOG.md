@@ -1,20 +1,9 @@
-# Version 0.3.2
+# Version 1.0.1
 
-- Make `Blocking` implement `Send` in more cases.
+- Reduce the complexity of `notify_all()` from O(n^2) to O(n).
+- Fix a bug where entries were notified in wrong order.
+- Add tests.
 
-# Version 0.3.1
+# Version 1.0.0
 
-- Add `Blocking::with_mut()`.
-
-# Version 0.3.0
-
-- Remove `Blocking::spawn()`.
-- Implement `Future` for `Blocking` only when the inner type is a `FnOnce`.
-
-# Version 0.2.0
-
-- Initial version
-
-# Version 0.1.0
-
-- Reserved crate name
+- Initial version.
