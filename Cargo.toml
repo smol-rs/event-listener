@@ -1,6 +1,6 @@
 [package]
 name = "event-listener"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Stjepan Glavina <stjepang@gmail.com>"]
 edition = "2018"
 description = "Notify async tasks or threads"
@@ -11,3 +11,7 @@ documentation = "https://docs.rs/event-listener"
 keywords = ["condvar", "eventcount", "wake", "blocking", "park"]
 categories = ["asynchronous", "concurrency"]
 readme = "README.md"
+
+[dev-dependencies]
+futures = { version = "0.3.5", default-features = false, features = ["std"] }
+waker-fn = "1.0.0"
