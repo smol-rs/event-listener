@@ -205,7 +205,8 @@ impl Event {
         // Make sure the notification comes after whatever triggered it.
         full_fence();
 
-        // Notify if no active listeners have been notified and there is at least one listener.
+        // Notify if there is at least one unnotified listener and the number of notified listeners
+        // is less than `n`.
         if inner.notified.load(Ordering::Relaxed) < n {
             inner.lock().notify(n);
         }
