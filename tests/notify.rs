@@ -14,6 +14,25 @@ fn is_notified(listener: &mut EventListener) -> bool {
 }
 
 #[test]
+fn notify() {
+    let event = Event::new();
+
+    let mut l1 = event.listen();
+    let mut l2 = event.listen();
+    let mut l3 = event.listen();
+
+    assert!(!is_notified(&mut l1));
+    assert!(!is_notified(&mut l2));
+    assert!(!is_notified(&mut l3));
+
+    event.notify(2);
+    event.notify(1);
+    assert!(is_notified(&mut l1));
+    assert!(is_notified(&mut l2));
+    assert!(!is_notified(&mut l3));
+}
+
+#[test]
 fn notify_one() {
     let event = Event::new();
 

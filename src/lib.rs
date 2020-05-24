@@ -74,16 +74,12 @@ use std::task::{Context, Poll, Waker};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
 
-/// A bit set inside [`Event`] when there is at least one listener that has already been notified.
-const NOTIFIED: usize = 1 << 0;
-
-/// A bit set inside [`Event`] when there is at least one notifiable listener.
-const NOTIFIABLE: usize = 1 << 1;
-
 /// Inner state of [`Event`].
 struct Inner {
-    /// Holds bits [`NOTIFIED`] and [`NOTIFIABLE`].
-    flags: AtomicUsize,
+    /// The number of notified entries, or `usize::MAX` if all of them have been notified.
+    ///
+    /// If there are no entries, this value is set to `usize::MAX`.
+    notified: AtomicUsize,
 
     /// A linked list holding registered listeners.
     list: Mutex<List>,
@@ -101,16 +97,18 @@ impl Inner {
 
 /// A synchronization primitive for notifying async tasks and threads.
 ///
-/// Listeners can be registered using [`Event::listen()`]. There are two ways of notifying
+/// Listeners can be registered using [`Event::listen()`]. There are three ways of notifying
 /// listeners:
 ///
 /// 1. [`Event::notify_one()`] notifies one listener.
 /// 2. [`Event::notify_all()`] notifies all listeners.
+/// 3. [`Event::notify()`] notifies an arbitrary number of listeners.
 ///
 /// If there are no active listeners at the time a notification is sent, it simply gets lost.
 ///
 /// Note that [`Event::notify_one()`] does not notify one *additional* listener - it only makes
-/// sure *at least* one listener among the active ones is notified.
+/// sure *at least* one listener among the active ones is notified. Similarly, [`Event::notify()`]
+/// makes sure a number of active listeners are notified.
 ///
 /// There are two ways for a listener to wait for a notification:
 ///
@@ -173,10 +171,52 @@ impl Event {
         listener
     }
 
+    /// Notifies a number of active listeners.
+    ///
+    /// The number is allowed to be zero or exceed the current number of listeners.
+    ///
+    /// Note that this does not notify `n` *additional* listeners - it only makes sure *at least*
+    /// `n` listeners among the active ones are notified.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    ///
+    /// // This notification gets lost because there are no listeners.
+    /// event.notify(1);
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    /// let listener3 = event.listen();
+    ///
+    /// // Notifies two listeners.
+    /// //
+    /// // Listener queueing is fair, which means `listener1` and `listener2`
+    /// // get notified here since they start listening before `listener3`.
+    /// event.notify_one();
+    /// ```
+    #[inline]
+    pub fn notify(&self, n: usize) {
+        let inner = self.inner();
+
+        // Make sure the notification comes after whatever triggered it.
+        full_fence();
+
+        // Notify if no active listeners have been notified and there is at least one listener.
+        if inner.notified.load(Ordering::Relaxed) < n {
+            inner.lock().notify(n);
+        }
+    }
+
     /// Notifies a single active listener.
     ///
     /// Note that this does not notify one *additional* listener - it only makes sure *at least*
     /// one listener among the active ones is notified.
+    ///
+    /// This method is equivalent to `self.notify(1)`.
     ///
     /// # Examples
     ///
@@ -199,19 +239,12 @@ impl Event {
     /// ```
     #[inline]
     pub fn notify_one(&self) {
-        let inner = self.inner();
-
-        // Make sure the notification comes after whatever triggered it.
-        full_fence();
-
-        // Notify if no active listeners have been notified and there is at least one listener.
-        let flags = inner.flags.load(Ordering::Relaxed);
-        if flags & NOTIFIED == 0 && flags & NOTIFIABLE != 0 {
-            inner.lock().notify(false);
-        }
+        self.notify(1);
     }
 
     /// Notifies all active listeners.
+    ///
+    /// This method is equivalent to `self.notify(usize::MAX)`.
     ///
     /// # Examples
     ///
@@ -231,15 +264,7 @@ impl Event {
     /// ```
     #[inline]
     pub fn notify_all(&self) {
-        let inner = self.inner();
-
-        // Make sure the notification comes after whatever triggered it.
-        full_fence();
-
-        // Notify if there is at least one listener.
-        if inner.flags.load(Ordering::Relaxed) & NOTIFIABLE != 0 {
-            inner.lock().notify(true);
-        }
+        self.notify(usize::MAX);
     }
 
     /// Returns a reference to the inner state.
@@ -250,12 +275,13 @@ impl Event {
         if inner.is_null() {
             // Allocate on the heap.
             let new = Arc::new(Inner {
-                flags: AtomicUsize::new(0),
+                notified: AtomicUsize::new(usize::MAX),
                 list: Mutex::new(List {
                     head: None,
                     tail: None,
+                    start: None,
                     len: 0,
-                    notifiable: 0,
+                    notified: 0,
                 }),
             });
             // Convert the heap-allocated state into a raw pointer.
@@ -499,7 +525,7 @@ impl Drop for EventListener {
             // But if a notification was delivered to it...
             if list.remove(entry).is_notified() {
                 // Then pass it on to another active listener.
-                list.notify(false);
+                list.notify(1);
             }
         }
     }
@@ -518,19 +544,14 @@ impl Drop for ListGuard<'_> {
     #[inline]
     fn drop(&mut self) {
         let list = &mut **self;
-        let mut flags = 0;
 
-        // Set the `NOTIFIED` flag if there is at least one notified listener.
-        if list.len - list.notifiable > 0 {
-            flags |= NOTIFIED;
-        }
-
-        // Set the `NOTIFIABLE` flag if there is at least one notifiable listener.
-        if list.notifiable > 0 {
-            flags |= NOTIFIABLE;
-        }
-
-        self.inner.flags.store(flags, Ordering::Release);
+        // Update the atomic `notified` counter.
+        let notified = if list.notified < list.len {
+            list.notified
+        } else {
+            usize::MAX
+        };
+        self.inner.notified.store(notified, Ordering::Release);
     }
 }
 
@@ -588,20 +609,6 @@ struct Entry {
     next: Cell<Option<NonNull<Entry>>>,
 }
 
-impl Entry {
-    /// Returns `true` if this entry has been notified.
-    #[inline]
-    fn is_notified(&self) -> bool {
-        // Do a dummy replace operation in order to take out the state.
-        let state = self.state.replace(State::Notified);
-
-        // Put back the state.
-        let is_notified = state.is_notified();
-        self.state.set(state);
-        is_notified
-    }
-}
-
 /// A linked list of entries.
 struct List {
     /// First entry in the list.
@@ -610,13 +617,14 @@ struct List {
     /// Last entry in the list.
     tail: Option<NonNull<Entry>>,
 
+    /// The first unnotified entry in the list.
+    start: Option<NonNull<Entry>>,
+
     /// Total number of entries in the list.
     len: usize,
 
-    /// Number of notifiable entries in the list.
-    ///
-    /// Notifiable entries are those that haven't been notified yet.
-    notifiable: usize,
+    /// The number of notified entries in the list.
+    notified: usize,
 }
 
 impl List {
@@ -636,9 +644,13 @@ impl List {
                 Some(t) => t.as_ref().next.set(Some(entry)),
             }
 
-            // Bump the total count and the count of notifiable entries.
+            // If there were no unnotified entries, this one is the first now.
+            if self.start.is_none() {
+                self.start = self.tail;
+            }
+
+            // Bump the entry count.
             self.len += 1;
-            self.notifiable += 1;
 
             entry
         }
@@ -662,13 +674,18 @@ impl List {
                 Some(n) => n.as_ref().prev.set(prev),
             }
 
+            // If this was the first unnotified entry, move the pointer to the next one.
+            if self.start == Some(entry) {
+                self.start = next;
+            }
+
             // Deallocate and extract the state.
             let entry = Box::from_raw(entry.as_ptr());
             let state = entry.state.into_inner();
 
             // Update the counters.
-            if !state.is_notified() {
-                self.notifiable -= 1;
+            if state.is_notified() {
+                self.notified -= 1;
             }
             self.len -= 1;
 
@@ -676,56 +693,37 @@ impl List {
         }
     }
 
-    /// Notifies an entry.
+    /// Notifies a number of entries.
     #[cold]
-    fn notify(&mut self, notify_all: bool) {
-        if notify_all {
-            let mut entry = self.tail;
+    fn notify(&mut self, mut n: usize) {
+        if n <= self.notified {
+            return;
+        }
+        n -= self.notified;
 
-            // Find the last notified entry.
-            while let Some(e) = entry {
-                let e = unsafe { e.as_ref() };
-                if e.is_notified() || entry == self.head {
-                    break;
+        while n > 0 {
+            n -= 1;
+
+            // Notify the first unnotified entry.
+            match self.start {
+                None => break,
+                Some(e) => {
+                    // Get the entry and move the pointer forward.
+                    let e = unsafe { e.as_ref() };
+                    self.start = e.next.get();
+
+                    // Set the state of this entry to `Notified` and notify.
+                    match e.state.replace(State::Notified) {
+                        State::Notified => {}
+                        State::Created => {}
+                        State::Polling(w) => w.wake(),
+                        State::Waiting(t) => t.unpark(),
+                    }
+
+                    // Update the counter.
+                    self.notified += 1;
                 }
-                entry = e.prev.get();
             }
-
-            // Notify all entries until the end.
-            while let Some(e) = entry {
-                let e = unsafe { e.as_ref() };
-                self.set_notified(e);
-                entry = e.next.get();
-            }
-        } else {
-            // Only need to make sure the first entry is notified.
-            if let Some(e) = self.head {
-                let e = unsafe { e.as_ref() };
-                self.set_notified(e);
-            }
-        }
-    }
-
-    /// Notifies an entry and returns `true` if it wasn't notified already.
-    fn set_notified(&mut self, e: &Entry) -> bool {
-        // Set the state of this entry to `Notified`.
-        let state = e.state.replace(State::Notified);
-        let was_notified = state.is_notified();
-
-        // Wake the task or unpark the thread.
-        match state {
-            State::Notified => {}
-            State::Created => {}
-            State::Polling(w) => w.wake(),
-            State::Waiting(t) => t.unpark(),
-        }
-
-        // Update the count of notifiable entries.
-        if !was_notified {
-            self.notifiable -= 1;
-            true
-        } else {
-            false
         }
     }
 }
