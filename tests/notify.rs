@@ -33,6 +33,23 @@ fn notify() {
 }
 
 #[test]
+fn notify_additional() {
+    let event = Event::new();
+
+    let mut l1 = event.listen();
+    let mut l2 = event.listen();
+    let mut l3 = event.listen();
+
+    event.notify_additional(1);
+    event.notify(1);
+    event.notify_additional(1);
+
+    assert!(is_notified(&mut l1));
+    assert!(is_notified(&mut l2));
+    assert!(!is_notified(&mut l3));
+}
+
+#[test]
 fn notify_one() {
     let event = Event::new();
 

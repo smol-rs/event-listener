@@ -97,18 +97,20 @@ impl Inner {
 
 /// A synchronization primitive for notifying async tasks and threads.
 ///
-/// Listeners can be registered using [`Event::listen()`]. There are three ways of notifying
+/// Listeners can be registered using [`Event::listen()`]. There are threifour ways of notifying
 /// listeners:
 ///
 /// 1. [`Event::notify_one()`] notifies one listener.
 /// 2. [`Event::notify_all()`] notifies all listeners.
 /// 3. [`Event::notify()`] notifies an arbitrary number of listeners.
+/// 4. [`Event::notify_additional()`] notifies an arbitrary number of unnotified listeners.
 ///
 /// If there are no active listeners at the time a notification is sent, it simply gets lost.
 ///
 /// Note that [`Event::notify_one()`] does not notify one *additional* listener - it only makes
 /// sure *at least* one listener among the active ones is notified. Similarly, [`Event::notify()`]
-/// makes sure a number of active listeners are notified.
+/// makes sure a number of active listeners are notified. If you need to notify additional
+/// listeners, use [`Event::notify_additional()`].
 ///
 /// There are two ways for a listener to wait for a notification:
 ///
@@ -209,6 +211,48 @@ impl Event {
         // is less than `n`.
         if inner.notified.load(Ordering::Acquire) < n {
             inner.lock().notify(n);
+        }
+    }
+
+    /// Notifies a number of active and still unnotified listeners.
+    ///
+    /// The number is allowed to be zero or exceed the current number of listeners.
+    ///
+    /// In contrast to [`Event::notify()`], this method will notify `n` *additional* listeners that
+    /// were previously unnotified.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    ///
+    /// // This notification gets lost because there are no listeners.
+    /// event.notify(1);
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    /// let listener3 = event.listen();
+    ///
+    /// // Notifies two listeners.
+    /// //
+    /// // Listener queueing is fair, which means `listener1` and `listener2`
+    /// // get notified here since they start listening before `listener3`.
+    /// event.notify_one();
+    /// ```
+    #[inline]
+    pub fn notify_additional(&self, n: usize) {
+        let inner = self.inner();
+
+        // Make sure the notification comes after whatever triggered it.
+        full_fence();
+
+        // Notify if there is at least one unnotified listener.
+        if inner.notified.load(Ordering::Acquire) < usize::MAX {
+            let mut inner = inner.lock();
+            let n = n.saturating_add(inner.notified);
+            inner.notify(n);
         }
     }
 
