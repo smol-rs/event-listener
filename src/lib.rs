@@ -207,7 +207,7 @@ impl Event {
 
         // Notify if there is at least one unnotified listener and the number of notified listeners
         // is less than `n`.
-        if inner.notified.load(Ordering::Relaxed) < n {
+        if inner.notified.load(Ordering::Acquire) < n {
             inner.lock().notify(n);
         }
     }
