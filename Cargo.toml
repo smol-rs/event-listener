@@ -1,6 +1,6 @@
 [package]
 name = "event-listener"
-version = "1.1.1"
+version = "1.1.2"
 authors = ["Stjepan Glavina <stjepang@gmail.com>"]
 edition = "2018"
 description = "Notify async tasks or threads"

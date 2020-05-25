@@ -1,3 +1,7 @@
+# Version 1.1.2
+
+- Change a `Relaxed` load to `Acquire` load.
+
 # Version 1.1.1
 
 - Fix a bug in `EventListener::wait_timeout()`.
