@@ -1,3 +1,7 @@
+# Version 1.1.1
+
+- Fix a bug in `EventListener::wait_timeout()`.
+
 # Version 1.1.0
 
 - Add `EventListener::notify()`.
