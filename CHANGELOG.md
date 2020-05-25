@@ -1,3 +1,7 @@
+# Version 1.2.0
+
+- Add `Event::notify_additional()`.
+
 # Version 1.1.2
 
 - Change a `Relaxed` load to `Acquire` load.
