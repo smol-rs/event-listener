@@ -448,7 +448,12 @@ impl EventListener {
                     // Check for timeout.
                     let now = Instant::now();
                     if now >= deadline {
-                        return false;
+                        // Remove the entry and check if notified.
+                        if self.inner.lock().remove(entry).is_notified() {
+                            return true;
+                        } else {
+                            return false;
+                        }
                     }
 
                     // Park until the deadline.
