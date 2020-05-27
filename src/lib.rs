@@ -35,7 +35,7 @@
 //!         flag.store(true, Ordering::SeqCst);
 //!
 //!         // Notify all listeners that the flag has been set.
-//!         event.notify_all();
+//!         event.notify(usize::MAX);
 //!     }
 //! });
 //!
@@ -97,20 +97,12 @@ impl Inner {
 
 /// A synchronization primitive for notifying async tasks and threads.
 ///
-/// Listeners can be registered using [`Event::listen()`]. There are threifour ways of notifying
-/// listeners:
+/// Listeners can be registered using [`Event::listen()`]. There are two ways to notify listeners:
 ///
-/// 1. [`Event::notify_one()`] notifies one listener.
-/// 2. [`Event::notify_all()`] notifies all listeners.
-/// 3. [`Event::notify()`] notifies an arbitrary number of listeners.
-/// 4. [`Event::notify_additional()`] notifies an arbitrary number of unnotified listeners.
+/// 1. [`Event::notify()`] notifies a number of listeners.
+/// 2. [`Event::notify_additional()`] notifies a number of previously unnotified listeners.
 ///
 /// If there are no active listeners at the time a notification is sent, it simply gets lost.
-///
-/// Note that [`Event::notify_one()`] does not notify one *additional* listener - it only makes
-/// sure *at least* one listener among the active ones is notified. Similarly, [`Event::notify()`]
-/// makes sure a number of active listeners are notified. If you need to notify additional
-/// listeners, use [`Event::notify_additional()`].
 ///
 /// There are two ways for a listener to wait for a notification:
 ///
@@ -118,7 +110,8 @@ impl Inner {
 /// 2. In a blocking manner by calling [`EventListener::wait()`] on it.
 ///
 /// If a notified listener is dropped without receiving a notification, dropping will notify
-/// another active listener.
+/// another active listener. Whether one *additional* listener will be notified depends on what
+/// kind of notification was delivered.
 ///
 /// Listeners are registered and notified in the first-in first-out fashion, ensuring fairness.
 pub struct Event {
@@ -152,6 +145,8 @@ impl Event {
 
     /// Returns a guard listening for a notification.
     ///
+    /// This method emits a `SeqCst` fence after registering a listener.
+    ///
     /// # Examples
     ///
     /// ```
@@ -177,8 +172,10 @@ impl Event {
     ///
     /// The number is allowed to be zero or exceed the current number of listeners.
     ///
-    /// Note that this does not notify `n` *additional* listeners - it only makes sure *at least*
-    /// `n` listeners among the active ones are notified.
+    /// In contrast to [`Event::notify_additional()`], this method only makes sure *at least* `n`
+    /// listeners among the active ones are notified.
+    ///
+    /// This method emits a `SeqCst` fence before notifying listeners.
     ///
     /// # Examples
     ///
@@ -198,7 +195,7 @@ impl Event {
     /// //
     /// // Listener queueing is fair, which means `listener1` and `listener2`
     /// // get notified here since they start listening before `listener3`.
-    /// event.notify_one();
+    /// event.notify(2);
     /// ```
     #[inline]
     pub fn notify(&self, n: usize) {
@@ -214,12 +211,58 @@ impl Event {
         }
     }
 
+    /// Notifies a number of active listeners without emitting a `SeqCst` fence.
+    ///
+    /// The number is allowed to be zero or exceed the current number of listeners.
+    ///
+    /// In contrast to [`Event::notify_additional()`], this method only makes sure *at least* `n`
+    /// listeners among the active ones are notified.
+    ///
+    /// Unlike [`Event::notify()`], this method does not emit a `SeqCst` fence.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    /// use std::sync::atomic::{self, Ordering};
+    ///
+    /// let event = Event::new();
+    ///
+    /// // This notification gets lost because there are no listeners.
+    /// event.notify(1);
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    /// let listener3 = event.listen();
+    ///
+    /// // We should emit a fence manually when using relaxed notifications.
+    /// atomic::fence(Ordering::SeqCst);
+    ///
+    /// // Notifies two listeners.
+    /// //
+    /// // Listener queueing is fair, which means `listener1` and `listener2`
+    /// // get notified here since they start listening before `listener3`.
+    /// event.notify(2);
+    /// ```
+    #[inline]
+    pub fn notify_relaxed(&self, n: usize) {
+        let inner = self.inner();
+
+        // Notify if there is at least one unnotified listener and the number of notified listeners
+        // is less than `n`.
+        if inner.notified.load(Ordering::Acquire) < n {
+            inner.lock().notify(n);
+        }
+    }
+
     /// Notifies a number of active and still unnotified listeners.
     ///
     /// The number is allowed to be zero or exceed the current number of listeners.
     ///
     /// In contrast to [`Event::notify()`], this method will notify `n` *additional* listeners that
     /// were previously unnotified.
+    ///
+    /// This method emits a `SeqCst` fence before notifying listeners.
     ///
     /// # Examples
     ///
@@ -239,7 +282,8 @@ impl Event {
     /// //
     /// // Listener queueing is fair, which means `listener1` and `listener2`
     /// // get notified here since they start listening before `listener3`.
-    /// event.notify_one();
+    /// event.notify_additional(1);
+    /// event.notify_additional(1);
     /// ```
     #[inline]
     pub fn notify_additional(&self, n: usize) {
@@ -250,66 +294,53 @@ impl Event {
 
         // Notify if there is at least one unnotified listener.
         if inner.notified.load(Ordering::Acquire) < usize::MAX {
-            let mut inner = inner.lock();
-            let n = n.saturating_add(inner.notified);
-            inner.notify(n);
+            inner.lock().notify_additional(n);
         }
     }
 
-    /// Notifies a single active listener.
+    /// Notifies a number of active and still unnotified listeners without emitting a `SeqCst`
+    /// fence.
     ///
-    /// Note that this does not notify one *additional* listener - it only makes sure *at least*
-    /// one listener among the active ones is notified.
+    /// The number is allowed to be zero or exceed the current number of listeners.
     ///
-    /// This method is equivalent to `self.notify(1)`.
+    /// In contrast to [`Event::notify()`], this method will notify `n` *additional* listeners that
+    /// were previously unnotified.
+    ///
+    /// Unlike [`Event::notify_additional()`], this method does not emit a `SeqCst` fence.
     ///
     /// # Examples
     ///
     /// ```
     /// use event_listener::Event;
+    /// use std::sync::atomic::{self, Ordering};
     ///
     /// let event = Event::new();
     ///
     /// // This notification gets lost because there are no listeners.
-    /// event.notify_one();
+    /// event.notify(1);
     ///
     /// let listener1 = event.listen();
     /// let listener2 = event.listen();
+    /// let listener3 = event.listen();
     ///
-    /// // Notifies just one of `listener1` and `listener2`.
+    /// // We should emit a fence manually when using relaxed notifications.
+    /// atomic::fence(Ordering::SeqCst);
+    ///
+    /// // Notifies two listeners.
     /// //
-    /// // Listener queueing is fair, which means `listener1` gets notified
-    /// // here since it was the first to start listening.
-    /// event.notify_one();
+    /// // Listener queueing is fair, which means `listener1` and `listener2`
+    /// // get notified here since they start listening before `listener3`.
+    /// event.notify_additional_relaxed(1);
+    /// event.notify_additional_relaxed(1);
     /// ```
     #[inline]
-    pub fn notify_one(&self) {
-        self.notify(1);
-    }
+    pub fn notify_additional_relaxed(&self, n: usize) {
+        let inner = self.inner();
 
-    /// Notifies all active listeners.
-    ///
-    /// This method is equivalent to `self.notify(usize::MAX)`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use event_listener::Event;
-    ///
-    /// let event = Event::new();
-    ///
-    /// // This notification gets lost because there are no listeners.
-    /// event.notify_all();
-    ///
-    /// let listener1 = event.listen();
-    /// let listener2 = event.listen();
-    ///
-    /// // Both `listener1` and `listener2` get notified.
-    /// event.notify_all();
-    /// ```
-    #[inline]
-    pub fn notify_all(&self) {
-        self.notify(usize::MAX);
+        // Notify if there is at least one unnotified listener.
+        if inner.notified.load(Ordering::Acquire) < usize::MAX {
+            inner.lock().notify_additional(n);
+        }
     }
 
     /// Returns a reference to the inner state.
@@ -386,7 +417,8 @@ impl Default for Event {
 /// 2. In a blocking manner by calling [`EventListener::wait()`] on it.
 ///
 /// If a notified listener is dropped without receiving a notification, dropping will notify
-/// another active listener.
+/// another active listener. Whether one *additional* listener will be notified depends on what
+/// kind of notification was delivered.
 pub struct EventListener {
     /// A reference to [`Event`]'s inner state.
     inner: Arc<Inner>,
@@ -410,7 +442,7 @@ impl EventListener {
     /// let listener = event.listen();
     ///
     /// // Notify `listener`.
-    /// event.notify_one();
+    /// event.notify(1);
     ///
     /// // Receive the notification.
     /// listener.wait();
@@ -472,8 +504,8 @@ impl EventListener {
             let e = unsafe { entry.as_ref() };
 
             // Do a dummy replace operation in order to take out the state.
-            match e.state.replace(State::Notified) {
-                State::Notified => {
+            match e.state.replace(State::Notified(false)) {
+                State::Notified(_) => {
                     // If this listener has been notified, remove it from the list and return.
                     list.remove(entry);
                     return true;
@@ -509,8 +541,8 @@ impl EventListener {
             let e = unsafe { entry.as_ref() };
 
             // Do a dummy replace operation in order to take out the state.
-            match e.state.replace(State::Notified) {
-                State::Notified => {
+            match e.state.replace(State::Notified(false)) {
+                State::Notified(_) => {
                     // If this listener has been notified, remove it from the list and return.
                     list.remove(entry);
                     return true;
@@ -541,8 +573,8 @@ impl Future for EventListener {
         let state = unsafe { &entry.as_ref().state };
 
         // Do a dummy replace operation in order to take out the state.
-        match state.replace(State::Notified) {
-            State::Notified => {
+        match state.replace(State::Notified(false)) {
+            State::Notified(_) => {
                 // If this listener has been notified, remove it from the list and return.
                 list.remove(entry);
                 drop(list);
@@ -573,9 +605,13 @@ impl Drop for EventListener {
             let mut list = self.inner.lock();
 
             // But if a notification was delivered to it...
-            if list.remove(entry).is_notified() {
+            if let State::Notified(additional) = list.remove(entry) {
                 // Then pass it on to another active listener.
-                list.notify(1);
+                if additional {
+                    list.notify_additional(1);
+                } else {
+                    list.notify(1);
+                }
             }
         }
     }
@@ -627,7 +663,9 @@ enum State {
     Created,
 
     /// It has received a notification.
-    Notified,
+    ///
+    /// The `bool` is `true` if this was an "additional" notification.
+    Notified(bool),
 
     /// An async task is polling it.
     Polling(Waker),
@@ -641,7 +679,7 @@ impl State {
     #[inline]
     fn is_notified(&self) -> bool {
         match self {
-            State::Notified => true,
+            State::Notified(_) => true,
             State::Created | State::Polling(_) | State::Waiting(_) => false,
         }
     }
@@ -763,8 +801,37 @@ impl List {
                     self.start = e.next.get();
 
                     // Set the state of this entry to `Notified` and notify.
-                    match e.state.replace(State::Notified) {
-                        State::Notified => {}
+                    match e.state.replace(State::Notified(false)) {
+                        State::Notified(_) => {}
+                        State::Created => {}
+                        State::Polling(w) => w.wake(),
+                        State::Waiting(t) => t.unpark(),
+                    }
+
+                    // Update the counter.
+                    self.notified += 1;
+                }
+            }
+        }
+    }
+
+    /// Notifies a number of additional entries.
+    #[cold]
+    fn notify_additional(&mut self, mut n: usize) {
+        while n > 0 {
+            n -= 1;
+
+            // Notify the first unnotified entry.
+            match self.start {
+                None => break,
+                Some(e) => {
+                    // Get the entry and move the pointer forward.
+                    let e = unsafe { e.as_ref() };
+                    self.start = e.next.get();
+
+                    // Set the state of this entry to `Notified` and notify.
+                    match e.state.replace(State::Notified(true)) {
+                        State::Notified(_) => {}
                         State::Created => {}
                         State::Polling(w) => w.wake(),
                         State::Waiting(t) => t.unpark(),
