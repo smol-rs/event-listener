@@ -1,3 +1,9 @@
+# Version 2.0.0
+
+- Remove `Event::notify_one()` and `Event::notify_all()`.
+- Add `Event::notify_relaxed()` and `Event::notify_additional_relaxed()`.
+- Dropped notified `EventListener` now notifies one *or* one additional listener.
+
 # Version 1.2.0
 
 - Add `Event::notify_additional()`.
