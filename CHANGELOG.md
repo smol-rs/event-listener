@@ -1,3 +1,7 @@
+# Version 2.0.1
+
+- Replace `usize::MAX` with `std::usize::MAX`.
+
 # Version 2.0.0
 
 - Remove `Event::notify_one()` and `Event::notify_all()`.

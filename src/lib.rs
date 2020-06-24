@@ -18,6 +18,7 @@
 //! use std::sync::Arc;
 //! use std::thread;
 //! use std::time::Duration;
+//! use std::usize;
 //! use event_listener::Event;
 //!
 //! let flag = Arc::new(AtomicBool::new(false));
@@ -73,6 +74,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
+use std::usize;
 
 /// Inner state of [`Event`].
 struct Inner {
