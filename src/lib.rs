@@ -507,7 +507,7 @@ impl EventListener {
     /// ```
     #[inline]
     pub fn listens_to(&self, event: &Event) -> bool {
-        ptr::eq(&*self.inner, event.inner.load(Ordering::Relaxed))
+        ptr::eq(&*self.inner, event.inner.load(Ordering::Acquire))
     }
 
     fn wait_internal(mut self, deadline: Option<Instant>) -> bool {
