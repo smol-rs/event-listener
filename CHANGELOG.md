@@ -1,3 +1,7 @@
+# Version 2.2.0
+
+- Add `EventListener::same_event()`.
+
 # Version 2.1.0
 
 - Add `EventListener::listens_to()`.
