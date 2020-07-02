@@ -493,7 +493,7 @@ impl EventListener {
         self.wait_internal(Some(deadline))
     }
 
-    /// Returns `true` if this listener listens to the given `event`.
+    /// Returns `true` if this listener listens to the given `Event`.
     ///
     /// # Examples
     ///
@@ -507,7 +507,24 @@ impl EventListener {
     /// ```
     #[inline]
     pub fn listens_to(&self, event: &Event) -> bool {
-        ptr::eq(&*self.inner, event.inner.load(Ordering::Acquire))
+        ptr::eq::<Inner>(&*self.inner, event.inner.load(Ordering::Acquire))
+    }
+
+    /// Returns `true` if both listeners listen to the same `Event`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    ///
+    /// assert!(listener1.same_event(&listener2));
+    /// ```
+    pub fn same_event(&self, other: &EventListener) -> bool {
+        ptr::eq::<Inner>(&*self.inner, &*other.inner)
     }
 
     fn wait_internal(mut self, deadline: Option<Instant>) -> bool {
