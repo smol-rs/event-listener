@@ -1,3 +1,7 @@
+# Version 2.1.0
+
+- Add `EventListener::listens_to()`.
+
 # Version 2.0.1
 
 - Replace `usize::MAX` with `std::usize::MAX`.

@@ -493,7 +493,7 @@ impl EventListener {
         self.wait_internal(Some(deadline))
     }
 
-    /// Returns true if this listener listens to this event.
+    /// Returns `true` if this listener listens to the given `event`.
     ///
     /// # Examples
     ///
