@@ -68,7 +68,7 @@ use std::future::Future;
 use std::mem::{self, ManuallyDrop};
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
-use std::ptr::NonNull;
+use std::ptr::{self, NonNull};
 use std::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
@@ -491,6 +491,23 @@ impl EventListener {
     /// ```
     pub fn wait_deadline(self, deadline: Instant) -> bool {
         self.wait_internal(Some(deadline))
+    }
+
+    /// Returns true if this listener listens to this event.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    /// let listener = event.listen();
+    ///
+    /// assert!(listener.listens_to(&event));
+    /// ```
+    #[inline]
+    pub fn listens_to(&self, event: &Event) -> bool {
+        ptr::eq(&*self.inner, event.inner.load(Ordering::Acquire))
     }
 
     fn wait_internal(mut self, deadline: Option<Instant>) -> bool {
