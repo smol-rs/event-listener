@@ -622,8 +622,12 @@ impl Future for EventListener {
                 state.set(State::Polling(cx.waker().clone()));
             }
             State::Polling(w) => {
-                // If the listener was in the `Pooling` state, keep it.
-                state.set(State::Polling(w));
+                // If the listener was in the `Polling` state, update the waker.
+                if w.will_wake(cx.waker()) {
+                    state.set(State::Polling(w));
+                } else {
+                    state.set(State::Polling(cx.waker().clone()));
+                }
             }
             State::Waiting(_) => {
                 unreachable!("cannot poll and wait on `EventListener` at the same time")
