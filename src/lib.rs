@@ -554,7 +554,7 @@ impl EventListener {
         // Wait until a notification is received or the timeout is reached.
         loop {
             match deadline {
-                None => thread::park(),
+                None => thread::park_timeout(Duration::from_nanos(1000)),
 
                 Some(deadline) => {
                     // Check for timeout.
@@ -629,6 +629,7 @@ impl Future for EventListener {
                 unreachable!("cannot poll and wait on `EventListener` at the same time")
             }
         }
+        cx.waker().wake_by_ref();
 
         Poll::Pending
     }
