@@ -1,3 +1,7 @@
+# Version 2.2.1
+
+- Always keep the last waker in `EventListener::poll()`.
+
 # Version 2.2.0
 
 - Add `EventListener::same_event()`.
