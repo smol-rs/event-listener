@@ -1,3 +1,7 @@
+# Version 2.3.0
+
+- Implement `UnwindSafe`/`RefUnwindSafe` for `Event`/`EventListener`.
+
 # Version 2.2.1
 
 - Always keep the last waker in `EventListener::poll()`.
