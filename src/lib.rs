@@ -67,6 +67,7 @@ use std::fmt;
 use std::future::Future;
 use std::mem::{self, ManuallyDrop};
 use std::ops::{Deref, DerefMut};
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
@@ -127,6 +128,9 @@ pub struct Event {
 
 unsafe impl Send for Event {}
 unsafe impl Sync for Event {}
+
+impl UnwindSafe for Event {}
+impl RefUnwindSafe for Event {}
 
 impl Event {
     /// Creates a new [`Event`].
@@ -431,6 +435,9 @@ pub struct EventListener {
 
 unsafe impl Send for EventListener {}
 unsafe impl Sync for EventListener {}
+
+impl UnwindSafe for EventListener {}
+impl RefUnwindSafe for EventListener {}
 
 impl EventListener {
     /// Blocks until a notification is received.
