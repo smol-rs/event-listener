@@ -205,15 +205,15 @@ impl Event {
     /// ```
     #[inline]
     pub fn notify(&self, n: usize) {
-        let inner = self.inner();
-
         // Make sure the notification comes after whatever triggered it.
         full_fence();
 
-        // Notify if there is at least one unnotified listener and the number of notified listeners
-        // is less than `n`.
-        if inner.notified.load(Ordering::Acquire) < n {
-            inner.lock().notify(n);
+        if let Some(inner) = self.try_inner() {
+            // Notify if there is at least one unnotified listener and the number of notified
+            // listeners is less than `n`.
+            if inner.notified.load(Ordering::Acquire) < n {
+                inner.lock().notify(n);
+            }
         }
     }
 
@@ -252,12 +252,12 @@ impl Event {
     /// ```
     #[inline]
     pub fn notify_relaxed(&self, n: usize) {
-        let inner = self.inner();
-
-        // Notify if there is at least one unnotified listener and the number of notified listeners
-        // is less than `n`.
-        if inner.notified.load(Ordering::Acquire) < n {
-            inner.lock().notify(n);
+        if let Some(inner) = self.try_inner() {
+            // Notify if there is at least one unnotified listener and the number of notified
+            // listeners is less than `n`.
+            if inner.notified.load(Ordering::Acquire) < n {
+                inner.lock().notify(n);
+            }
         }
     }
 
@@ -293,14 +293,14 @@ impl Event {
     /// ```
     #[inline]
     pub fn notify_additional(&self, n: usize) {
-        let inner = self.inner();
-
         // Make sure the notification comes after whatever triggered it.
         full_fence();
 
-        // Notify if there is at least one unnotified listener.
-        if inner.notified.load(Ordering::Acquire) < usize::MAX {
-            inner.lock().notify_additional(n);
+        if let Some(inner) = self.try_inner() {
+            // Notify if there is at least one unnotified listener.
+            if inner.notified.load(Ordering::Acquire) < usize::MAX {
+                inner.lock().notify_additional(n);
+            }
         }
     }
 
@@ -341,15 +341,22 @@ impl Event {
     /// ```
     #[inline]
     pub fn notify_additional_relaxed(&self, n: usize) {
-        let inner = self.inner();
-
-        // Notify if there is at least one unnotified listener.
-        if inner.notified.load(Ordering::Acquire) < usize::MAX {
-            inner.lock().notify_additional(n);
+        if let Some(inner) = self.try_inner() {
+            // Notify if there is at least one unnotified listener.
+            if inner.notified.load(Ordering::Acquire) < usize::MAX {
+                inner.lock().notify_additional(n);
+            }
         }
     }
 
-    /// Returns a reference to the inner state.
+    /// Returns a reference to the inner state if it was initialized.
+    #[inline]
+    fn try_inner(&self) -> Option<&Inner> {
+        let inner = self.inner.load(Ordering::Acquire);
+        unsafe { inner.as_ref() }
+    }
+
+    /// Returns a reference to the inner state, initializing it if necessary.
     fn inner(&self) -> &Inner {
         let mut inner = self.inner.load(Ordering::Acquire);
 
