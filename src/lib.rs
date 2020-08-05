@@ -62,7 +62,7 @@
 
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 
-use std::cell::Cell;
+use std::cell::{Cell, UnsafeCell};
 use std::fmt;
 use std::future::Future;
 use std::mem::{self, ManuallyDrop};
@@ -70,8 +70,8 @@ use std::ops::{Deref, DerefMut};
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::ptr::{self, NonNull};
-use std::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{self, AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
@@ -85,7 +85,7 @@ struct Inner {
     notified: AtomicUsize,
 
     /// A linked list holding registered listeners.
-    list: Mutex<List>,
+    list: Spinlock<List>,
 }
 
 impl Inner {
@@ -93,7 +93,7 @@ impl Inner {
     fn lock(&self) -> ListGuard<'_> {
         ListGuard {
             inner: self,
-            guard: self.list.lock().unwrap(),
+            guard: self.list.lock(),
         }
     }
 }
@@ -365,12 +365,18 @@ impl Event {
             // Allocate on the heap.
             let new = Arc::new(Inner {
                 notified: AtomicUsize::new(usize::MAX),
-                list: Mutex::new(List {
+                list: Spinlock::new(List {
                     head: None,
                     tail: None,
                     start: None,
                     len: 0,
                     notified: 0,
+                    cache_used: false,
+                    cache: UnsafeCell::new(Entry {
+                        state: Cell::new(State::Created),
+                        prev: Cell::new(None),
+                        next: Cell::new(None),
+                    }),
                 }),
             });
             // Convert the heap-allocated state into a raw pointer.
@@ -677,7 +683,7 @@ struct ListGuard<'a> {
     inner: &'a Inner,
 
     /// The actual guard that acquired the linked list.
-    guard: MutexGuard<'a, List>,
+    guard: SpinlockGuard<'a, List>,
 }
 
 impl Drop for ListGuard<'_> {
@@ -767,18 +773,30 @@ struct List {
 
     /// The number of notified entries in the list.
     notified: usize,
+
+    /// Whether the cached entry is used.
+    cache_used: bool,
+
+    /// A single cached entry to avoid allocations on the fast path.
+    cache: UnsafeCell<Entry>,
 }
 
 impl List {
     /// Inserts a new entry into the list.
     fn insert(&mut self) -> NonNull<Entry> {
         unsafe {
-            // Allocate an entry that is going to become the new tail.
-            let entry = NonNull::new_unchecked(Box::into_raw(Box::new(Entry {
-                state: Cell::new(State::Created),
-                prev: Cell::new(self.tail),
-                next: Cell::new(None),
-            })));
+            let entry = if self.cache_used {
+                // Allocate an entry that is going to become the new tail.
+                NonNull::new_unchecked(Box::into_raw(Box::new(Entry {
+                    state: Cell::new(State::Created),
+                    prev: Cell::new(self.tail),
+                    next: Cell::new(None),
+                })))
+            } else {
+                // No need to allocate - we can use the cached entry.
+                self.cache_used = true;
+                NonNull::new_unchecked(self.cache.get())
+            };
 
             // Replace the tail with the new entry.
             match mem::replace(&mut self.tail, Some(entry)) {
@@ -821,8 +839,22 @@ impl List {
                 self.start = next;
             }
 
-            // Deallocate and extract the state.
-            let entry = Box::from_raw(entry.as_ptr());
+            // Extract the state.
+            let entry = if ptr::eq(entry.as_ptr(), self.cache.get()) {
+                // Free the cached entry.
+                self.cache_used = false;
+                mem::replace(
+                    &mut *entry.as_ptr(),
+                    Entry {
+                        state: Cell::new(State::Created),
+                        prev: Cell::new(None),
+                        next: Cell::new(None),
+                    },
+                )
+            } else {
+                // Deallocate the entry.
+                *Box::from_raw(entry.as_ptr())
+            };
             let state = entry.state.into_inner();
 
             // Update the counters.
@@ -919,5 +951,54 @@ fn full_fence() {
         a.compare_and_swap(0, 1, Ordering::SeqCst);
     } else {
         atomic::fence(Ordering::SeqCst);
+    }
+}
+
+/// A simple spinlock.
+struct Spinlock<T> {
+    flag: AtomicBool,
+    value: UnsafeCell<T>,
+}
+
+impl<T> Spinlock<T> {
+    /// Returns a new spinlock initialized with `value`.
+    fn new(value: T) -> Spinlock<T> {
+        Spinlock {
+            flag: AtomicBool::new(false),
+            value: UnsafeCell::new(value),
+        }
+    }
+
+    /// Locks the spinlock.
+    fn lock(&self) -> SpinlockGuard<'_, T> {
+        while self.flag.swap(true, Ordering::Acquire) {
+            thread::yield_now();
+        }
+        SpinlockGuard { parent: self }
+    }
+}
+
+/// A guard holding a spinlock locked.
+struct SpinlockGuard<'a, T> {
+    parent: &'a Spinlock<T>,
+}
+
+impl<T> Drop for SpinlockGuard<'_, T> {
+    fn drop(&mut self) {
+        self.parent.flag.store(false, Ordering::Release);
+    }
+}
+
+impl<T> Deref for SpinlockGuard<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        unsafe { &*self.parent.value.get() }
+    }
+}
+
+impl<T> DerefMut for SpinlockGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.parent.value.get() }
     }
 }
