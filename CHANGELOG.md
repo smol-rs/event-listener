@@ -1,3 +1,7 @@
+# Version 2.3.2
+
+- Optimization: use a simple spinlock and cache an `Entry` for less allocation.
+
 # Version 2.3.1
 
 - Optimization: don't initialize `Inner` when notifying `Event`.
