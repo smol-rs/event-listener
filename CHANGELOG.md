@@ -1,3 +1,7 @@
+# Version 2.3.1
+
+- Optimization: don't initialize `Inner` when notifying `Event`.
+
 # Version 2.3.0
 
 - Implement `UnwindSafe`/`RefUnwindSafe` for `Event`/`EventListener`.
