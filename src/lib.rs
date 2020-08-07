@@ -785,16 +785,19 @@ impl List {
     /// Inserts a new entry into the list.
     fn insert(&mut self) -> NonNull<Entry> {
         unsafe {
+            let entry = Entry {
+                state: Cell::new(State::Created),
+                prev: Cell::new(self.tail),
+                next: Cell::new(None),
+            };
+
             let entry = if self.cache_used {
                 // Allocate an entry that is going to become the new tail.
-                NonNull::new_unchecked(Box::into_raw(Box::new(Entry {
-                    state: Cell::new(State::Created),
-                    prev: Cell::new(self.tail),
-                    next: Cell::new(None),
-                })))
+                NonNull::new_unchecked(Box::into_raw(Box::new(entry)))
             } else {
                 // No need to allocate - we can use the cached entry.
                 self.cache_used = true;
+                *self.cache.get() = entry;
                 NonNull::new_unchecked(self.cache.get())
             };
 
@@ -840,22 +843,14 @@ impl List {
             }
 
             // Extract the state.
-            let entry = if ptr::eq(entry.as_ptr(), self.cache.get()) {
+            let state = if ptr::eq(entry.as_ptr(), self.cache.get()) {
                 // Free the cached entry.
                 self.cache_used = false;
-                mem::replace(
-                    &mut *entry.as_ptr(),
-                    Entry {
-                        state: Cell::new(State::Created),
-                        prev: Cell::new(None),
-                        next: Cell::new(None),
-                    },
-                )
+                entry.as_ref().state.replace(State::Created)
             } else {
                 // Deallocate the entry.
-                *Box::from_raw(entry.as_ptr())
+                Box::from_raw(entry.as_ptr()).state.into_inner()
             };
-            let state = entry.state.into_inner();
 
             // Update the counters.
             if state.is_notified() {
