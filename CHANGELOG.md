@@ -1,3 +1,7 @@
+# Version 2.3.3
+
+- Fix a bug in `List::insert()` that was causing deadlocks.
+
 # Version 2.3.2
 
 - Optimization: use a simple spinlock and cache an `Entry` for less allocation.
