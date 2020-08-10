@@ -1,4 +1,4 @@
-tr//! A simple mutex implementation.
+//! A simple mutex implementation.
 //!
 //! This mutex exposes both blocking and async methods for acquiring a lock.
 
