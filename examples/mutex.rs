@@ -1,4 +1,4 @@
-//! A simple mutex implementation.
+tr//! A simple mutex implementation.
 //!
 //! This mutex exposes both blocking and async methods for acquiring a lock.
 
@@ -40,7 +40,7 @@ impl<T> Mutex<T> {
 
     /// Attempts to acquire a lock.
     fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        if self.locked.swap(true, Ordering::Acquire) {
+        if !self.locked.swap(true, Ordering::Acquire) {
             Some(MutexGuard(self))
         } else {
             None
