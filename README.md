@@ -46,7 +46,7 @@ thread::spawn({
         flag.store(true, Ordering::SeqCst);
 
         // Notify all listeners that the flag has been set.
-        event.notify_all();
+        event.notify(usize::MAX);
     }
 });
 
