@@ -143,9 +143,9 @@ impl Event {
     /// let event = Event::new();
     /// ```
     #[inline]
-    pub fn new() -> Event {
+    pub const fn new() -> Event {
         Event {
-            inner: AtomicPtr::default(),
+            inner: AtomicPtr::new(ptr::null_mut()),
         }
     }
 
