@@ -1,3 +1,7 @@
+# Version 2.4.0
+
+- `Event::new()` is now a const fn.
+
 # Version 2.3.3
 
 - Fix a bug in `List::insert()` that was causing deadlocks.
