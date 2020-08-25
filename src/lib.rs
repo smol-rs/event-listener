@@ -78,19 +78,19 @@ use std::time::{Duration, Instant};
 use std::usize;
 
 /// Inner state of [`Event`].
-struct Inner {
+struct Inner<T> {
     /// The number of notified entries, or `usize::MAX` if all of them have been notified.
     ///
     /// If there are no entries, this value is set to `usize::MAX`.
     notified: AtomicUsize,
 
     /// A linked list holding registered listeners.
-    list: Spinlock<List>,
+    list: Spinlock<List<T>>,
 }
 
-impl Inner {
+impl<T> Inner<T> {
     /// Locks the list.
-    fn lock(&self) -> ListGuard<'_> {
+    fn lock(&self) -> ListGuard<'_, T> {
         ListGuard {
             inner: self,
             guard: self.list.lock(),
@@ -117,22 +117,26 @@ impl Inner {
 /// kind of notification was delivered.
 ///
 /// Listeners are registered and notified in the first-in first-out fashion, ensuring fairness.
-pub struct Event {
+pub struct Event<T = ()> {
     /// A pointer to heap-allocated inner state.
     ///
     /// This pointer is initially null and gets lazily initialized on first use. Semantically, it
     /// is an `Arc<Inner>` so it's important to keep in mind that it contributes to the [`Arc`]'s
     /// reference count.
-    inner: AtomicPtr<Inner>,
+    inner: AtomicPtr<Inner<T>>,
 }
 
+// TODO
 unsafe impl Send for Event {}
+// TODO
 unsafe impl Sync for Event {}
 
+// TODO
 impl UnwindSafe for Event {}
+// TODO
 impl RefUnwindSafe for Event {}
 
-impl Event {
+impl<T> Event<T> {
     /// Creates a new [`Event`].
     ///
     /// # Examples
@@ -143,7 +147,7 @@ impl Event {
     /// let event = Event::new();
     /// ```
     #[inline]
-    pub const fn new() -> Event {
+    pub const fn new() -> Event<T> {
         Event {
             inner: AtomicPtr::new(ptr::null_mut()),
         }
@@ -162,7 +166,7 @@ impl Event {
     /// let listener = event.listen();
     /// ```
     #[cold]
-    pub fn listen(&self) -> EventListener {
+    pub fn listen(&self) -> EventListener<T> {
         let inner = self.inner();
         let listener = EventListener {
             inner: unsafe { Arc::clone(&ManuallyDrop::new(Arc::from_raw(inner))) },
@@ -174,6 +178,61 @@ impl Event {
         listener
     }
 
+    /// Returns a reference to the inner state if it was initialized.
+    #[inline]
+    fn try_inner(&self) -> Option<&Inner<T>> {
+        let inner = self.inner.load(Ordering::Acquire);
+        unsafe { inner.as_ref() }
+    }
+
+    /// Returns a reference to the inner state, initializing it if necessary.
+    fn inner(&self) -> &Inner<T> {
+        let mut inner = self.inner.load(Ordering::Acquire);
+
+        // Initialize the state if this is its first use.
+        if inner.is_null() {
+            // Allocate on the heap.
+            let new: Arc<Inner<T>> = Arc::new(Inner {
+                notified: AtomicUsize::new(usize::MAX),
+                list: Spinlock::new(List {
+                    head: None,
+                    tail: None,
+                    start: None,
+                    len: 0,
+                    notified: 0,
+                    cache_used: false,
+                    cache: UnsafeCell::new(Entry {
+                        state: Cell::new(State::Created),
+                        prev: Cell::new(None),
+                        next: Cell::new(None),
+                    }),
+                }),
+            });
+            // Convert the heap-allocated state into a raw pointer.
+            let new = Arc::into_raw(new) as *mut Inner<T>;
+
+            // Attempt to replace the null-pointer with the new state pointer.
+            inner = self.inner.compare_and_swap(inner, new, Ordering::AcqRel);
+
+            // Check if the old pointer value was indeed null.
+            if inner.is_null() {
+                // If yes, then use the new state pointer.
+                inner = new;
+            } else {
+                // If not, that means a concurrent operation has initialized the state.
+                // In that case, use the old pointer and deallocate the new one.
+                unsafe {
+                    drop(Arc::from_raw(new));
+                }
+            }
+        }
+
+        unsafe { &*inner }
+    }
+}
+
+
+impl Event {
     /// Notifies a number of active listeners.
     ///
     /// The number is allowed to be zero or exceed the current number of listeners.
@@ -348,64 +407,62 @@ impl Event {
             }
         }
     }
+}
 
-    /// Returns a reference to the inner state if it was initialized.
-    #[inline]
-    fn try_inner(&self) -> Option<&Inner> {
-        let inner = self.inner.load(Ordering::Acquire);
-        unsafe { inner.as_ref() }
-    }
+impl<T> Event<T> {
+    /// TODO
+    pub fn notify_with_token(&self, token: T) {
+        // Make sure the notification comes after whatever triggered it.
+        full_fence();
 
-    /// Returns a reference to the inner state, initializing it if necessary.
-    fn inner(&self) -> &Inner {
-        let mut inner = self.inner.load(Ordering::Acquire);
-
-        // Initialize the state if this is its first use.
-        if inner.is_null() {
-            // Allocate on the heap.
-            let new = Arc::new(Inner {
-                notified: AtomicUsize::new(usize::MAX),
-                list: Spinlock::new(List {
-                    head: None,
-                    tail: None,
-                    start: None,
-                    len: 0,
-                    notified: 0,
-                    cache_used: false,
-                    cache: UnsafeCell::new(Entry {
-                        state: Cell::new(State::Created),
-                        prev: Cell::new(None),
-                        next: Cell::new(None),
-                    }),
-                }),
-            });
-            // Convert the heap-allocated state into a raw pointer.
-            let new = Arc::into_raw(new) as *mut Inner;
-
-            // Attempt to replace the null-pointer with the new state pointer.
-            inner = self.inner.compare_and_swap(inner, new, Ordering::AcqRel);
-
-            // Check if the old pointer value was indeed null.
-            if inner.is_null() {
-                // If yes, then use the new state pointer.
-                inner = new;
-            } else {
-                // If not, that means a concurrent operation has initialized the state.
-                // In that case, use the old pointer and deallocate the new one.
-                unsafe {
-                    drop(Arc::from_raw(new));
-                }
+        if let Some(inner) = self.try_inner() {
+            // Notify if there is at least one unnotified listener and the number of notified
+            // listeners is 0.
+            if inner.notified.load(Ordering::Acquire) == 0 {
+                inner.lock().notify_with_token(token);
             }
         }
+    }
 
-        unsafe { &*inner }
+    /// TODO
+    pub fn notify_with_token_relaxed(&self, token: T) {
+        if let Some(inner) = self.try_inner() {
+            // Notify if there is at least one unnotified listener and the number of notified
+            // listeners is 0.
+            if inner.notified.load(Ordering::Acquire) == 0 {
+                inner.lock().notify_with_token(token);
+            }
+        }
+    }
+
+    /// TODO
+    pub fn notify_additional_with_token(&self, token: T) {
+        // Make sure the notification comes after whatever triggered it.
+        full_fence();
+
+        if let Some(inner) = self.try_inner() {
+            // Notify if there is at least one unnotified listener.
+            if inner.notified.load(Ordering::Acquire) < usize::MAX {
+                inner.lock().notify_additional_with_token(token);
+            }
+        }
+    }
+
+    /// TODO
+    pub fn notify_aditional_with_token_relaxed(&self, token: T) {
+        if let Some(inner) = self.try_inner() {
+            // Notify if there is at least one unnotified listener.
+            if inner.notified.load(Ordering::Acquire) < usize::MAX {
+                inner.lock().notify_additional_with_token(token);
+            }
+        }
     }
 }
 
-impl Drop for Event {
+impl<T> Drop for Event<T> {
     #[inline]
     fn drop(&mut self) {
-        let inner: *mut Inner = *self.inner.get_mut();
+        let inner: *mut Inner<T> = *self.inner.get_mut();
 
         // If the state pointer has been initialized, deallocate it.
         if !inner.is_null() {
@@ -416,14 +473,14 @@ impl Drop for Event {
     }
 }
 
-impl fmt::Debug for Event {
+impl<T> fmt::Debug for Event<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad("Event { .. }")
     }
 }
 
-impl Default for Event {
-    fn default() -> Event {
+impl<T> Default for Event<T> {
+    fn default() -> Event<T> {
         Event::new()
     }
 }
@@ -438,21 +495,25 @@ impl Default for Event {
 /// If a notified listener is dropped without receiving a notification, dropping will notify
 /// another active listener. Whether one *additional* listener will be notified depends on what
 /// kind of notification was delivered.
-pub struct EventListener {
+pub struct EventListener<T = ()> {
     /// A reference to [`Event`]'s inner state.
-    inner: Arc<Inner>,
+    inner: Arc<Inner<T>>,
 
     /// A pointer to this listener's entry in the linked list.
-    entry: Option<NonNull<Entry>>,
+    entry: Option<NonNull<Entry<T>>>,
 }
 
+// TODO
 unsafe impl Send for EventListener {}
+// TODO
 unsafe impl Sync for EventListener {}
 
+// TODO
 impl UnwindSafe for EventListener {}
+// TODO
 impl RefUnwindSafe for EventListener {}
 
-impl EventListener {
+impl<T> EventListener<T> {
     /// Blocks until a notification is received.
     ///
     /// # Examples
@@ -469,8 +530,8 @@ impl EventListener {
     /// // Receive the notification.
     /// listener.wait();
     /// ```
-    pub fn wait(self) {
-        self.wait_internal(None);
+    pub fn wait(self) -> T {
+        self.wait_internal(None).expect("waiting without deadline should always return a token")
     }
 
     /// Blocks until a notification is received or a timeout is reached.
@@ -490,7 +551,7 @@ impl EventListener {
     /// assert!(!listener.wait_timeout(Duration::from_secs(1)));
     /// ```
     pub fn wait_timeout(self, timeout: Duration) -> bool {
-        self.wait_internal(Some(Instant::now() + timeout))
+        self.wait_for_token_timeout(timeout).is_some()
     }
 
     /// Blocks until a notification is received or a deadline is reached.
@@ -510,6 +571,16 @@ impl EventListener {
     /// assert!(!listener.wait_deadline(Instant::now() + Duration::from_secs(1)));
     /// ```
     pub fn wait_deadline(self, deadline: Instant) -> bool {
+        self.wait_for_token_deadline(deadline).is_some()
+    }
+
+    /// TODO
+    pub fn wait_for_token_timeout(self, timeout: Duration) -> Option<T> {
+        self.wait_internal(Some(Instant::now() + timeout))
+    }
+
+    /// TODO
+    pub fn wait_for_token_deadline(self, deadline: Instant) -> Option<T> {
         self.wait_internal(Some(deadline))
     }
 
@@ -526,8 +597,8 @@ impl EventListener {
     /// assert!(listener.listens_to(&event));
     /// ```
     #[inline]
-    pub fn listens_to(&self, event: &Event) -> bool {
-        ptr::eq::<Inner>(&*self.inner, event.inner.load(Ordering::Acquire))
+    pub fn listens_to(&self, event: &Event<T>) -> bool {
+        ptr::eq::<Inner<T>>(&*self.inner, event.inner.load(Ordering::Acquire))
     }
 
     /// Returns `true` if both listeners listen to the same `Event`.
@@ -543,11 +614,11 @@ impl EventListener {
     ///
     /// assert!(listener1.same_event(&listener2));
     /// ```
-    pub fn same_event(&self, other: &EventListener) -> bool {
-        ptr::eq::<Inner>(&*self.inner, &*other.inner)
+    pub fn same_event(&self, other: &EventListener<T>) -> bool {
+        ptr::eq::<Inner<T>>(&*self.inner, &*other.inner)
     }
 
-    fn wait_internal(mut self, deadline: Option<Instant>) -> bool {
+    fn wait_internal(mut self, deadline: Option<Instant>) -> Option<T> {
         // Take out the entry pointer and set it to `None`.
         let entry = match self.entry.take() {
             None => unreachable!("cannot wait twice on an `EventListener`"),
@@ -560,12 +631,13 @@ impl EventListener {
             let e = unsafe { entry.as_ref() };
 
             // Do a dummy replace operation in order to take out the state.
-            match e.state.replace(State::Notified(false)) {
-                State::Notified(_) => {
+            match e.state.replace(State::Dummy) {
+                State::Notified(_, token) => {
                     // If this listener has been notified, remove it from the list and return.
                     list.remove(entry);
-                    return true;
+                    return Some(token);
                 }
+                State::Dummy => unreachable!(),
                 // Otherwise, set the state to `Waiting`.
                 _ => e.state.set(State::Waiting(thread::current())),
             }
@@ -580,11 +652,9 @@ impl EventListener {
                     // Check for timeout.
                     let now = Instant::now();
                     if now >= deadline {
-                        // Remove the entry and check if notified.
-                        if self.inner.lock().remove(entry).is_notified() {
-                            return true;
-                        } else {
-                            return false;
+                        match self.inner.lock().remove(entry) {
+                            State::Notified(_, token) => return Some(token),
+                            _ => return None,
                         }
                     }
 
@@ -597,12 +667,13 @@ impl EventListener {
             let e = unsafe { entry.as_ref() };
 
             // Do a dummy replace operation in order to take out the state.
-            match e.state.replace(State::Notified(false)) {
-                State::Notified(_) => {
+            match e.state.replace(State::Dummy) {
+                State::Notified(_, token) => {
                     // If this listener has been notified, remove it from the list and return.
                     list.remove(entry);
-                    return true;
+                    return Some(token);
                 }
+                State::Dummy => unreachable!(),
                 // Otherwise, set the state back to `Waiting`.
                 state => e.state.set(state),
             }
@@ -610,14 +681,14 @@ impl EventListener {
     }
 }
 
-impl fmt::Debug for EventListener {
+impl<T> fmt::Debug for EventListener<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad("EventListener { .. }")
     }
 }
 
-impl Future for EventListener {
-    type Output = ();
+impl<T> Future for EventListener<T> {
+    type Output = T;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut list = self.inner.lock();
@@ -629,13 +700,13 @@ impl Future for EventListener {
         let state = unsafe { &entry.as_ref().state };
 
         // Do a dummy replace operation in order to take out the state.
-        match state.replace(State::Notified(false)) {
-            State::Notified(_) => {
+        match state.replace(State::Dummy) {
+            State::Notified(_, token) => {
                 // If this listener has been notified, remove it from the list and return.
                 list.remove(entry);
                 drop(list);
                 self.entry = None;
-                return Poll::Ready(());
+                return Poll::Ready(token);
             }
             State::Created => {
                 // If the listener was just created, put it in the `Polling` state.
@@ -652,25 +723,28 @@ impl Future for EventListener {
             State::Waiting(_) => {
                 unreachable!("cannot poll and wait on `EventListener` at the same time")
             }
+            State::Dummy => {
+                unreachable!("cannot poll `EventListener` in `Dummy` state")
+            }
         }
 
         Poll::Pending
     }
 }
 
-impl Drop for EventListener {
+impl<T> Drop for EventListener<T> {
     fn drop(&mut self) {
         // If this listener has never picked up a notification...
         if let Some(entry) = self.entry.take() {
             let mut list = self.inner.lock();
 
             // But if a notification was delivered to it...
-            if let State::Notified(additional) = list.remove(entry) {
+            if let State::Notified(additional, token) = list.remove(entry) {
                 // Then pass it on to another active listener.
                 if additional {
-                    list.notify_additional(1);
+                    list.notify_additional_with_token(token);
                 } else {
-                    list.notify(1);
+                    list.notify_with_token(token);
                 }
             }
         }
@@ -678,15 +752,15 @@ impl Drop for EventListener {
 }
 
 /// A guard holding the linked list locked.
-struct ListGuard<'a> {
+struct ListGuard<'a, T> {
     /// A reference to [`Event`]'s inner state.
-    inner: &'a Inner,
+    inner: &'a Inner<T>,
 
     /// The actual guard that acquired the linked list.
-    guard: SpinlockGuard<'a, List>,
+    guard: SpinlockGuard<'a, List<T>>,
 }
 
-impl Drop for ListGuard<'_> {
+impl<T> Drop for ListGuard<'_, T> {
     #[inline]
     fn drop(&mut self) {
         let list = &mut **self;
@@ -701,72 +775,75 @@ impl Drop for ListGuard<'_> {
     }
 }
 
-impl Deref for ListGuard<'_> {
-    type Target = List;
+impl<T> Deref for ListGuard<'_, T> {
+    type Target = List<T>;
 
     #[inline]
-    fn deref(&self) -> &List {
+    fn deref(&self) -> &List<T> {
         &*self.guard
     }
 }
 
-impl DerefMut for ListGuard<'_> {
+impl<T> DerefMut for ListGuard<'_, T> {
     #[inline]
-    fn deref_mut(&mut self) -> &mut List {
+    fn deref_mut(&mut self) -> &mut List<T> {
         &mut *self.guard
     }
 }
 
 /// The state of a listener.
-enum State {
+enum State<T> {
     /// It has just been created.
     Created,
 
     /// It has received a notification.
     ///
     /// The `bool` is `true` if this was an "additional" notification.
-    Notified(bool),
+    Notified(bool, T),
 
     /// An async task is polling it.
     Polling(Waker),
 
     /// A thread is blocked on it.
     Waiting(Thread),
+
+    Dummy,
 }
 
-impl State {
+impl<T> State<T> {
     /// Returns `true` if this is the `Notified` state.
     #[inline]
     fn is_notified(&self) -> bool {
         match self {
-            State::Notified(_) => true,
+            State::Notified(..) => true,
             State::Created | State::Polling(_) | State::Waiting(_) => false,
+            State::Dummy => unreachable!(),
         }
     }
 }
 
 /// An entry representing a registered listener.
-struct Entry {
+struct Entry<T> {
     /// THe state of this listener.
-    state: Cell<State>,
+    state: Cell<State<T>>,
 
     /// Previous entry in the linked list.
-    prev: Cell<Option<NonNull<Entry>>>,
+    prev: Cell<Option<NonNull<Entry<T>>>>,
 
     /// Next entry in the linked list.
-    next: Cell<Option<NonNull<Entry>>>,
+    next: Cell<Option<NonNull<Entry<T>>>>,
 }
 
 /// A linked list of entries.
-struct List {
+struct List<T> {
     /// First entry in the list.
-    head: Option<NonNull<Entry>>,
+    head: Option<NonNull<Entry<T>>>,
 
     /// Last entry in the list.
-    tail: Option<NonNull<Entry>>,
+    tail: Option<NonNull<Entry<T>>>,
 
     /// The first unnotified entry in the list.
-    start: Option<NonNull<Entry>>,
+    start: Option<NonNull<Entry<T>>>,
 
     /// Total number of entries in the list.
     len: usize,
@@ -778,12 +855,12 @@ struct List {
     cache_used: bool,
 
     /// A single cached entry to avoid allocations on the fast path.
-    cache: UnsafeCell<Entry>,
+    cache: UnsafeCell<Entry<T>>,
 }
 
-impl List {
+impl<T> List<T> {
     /// Inserts a new entry into the list.
-    fn insert(&mut self) -> NonNull<Entry> {
+    fn insert(&mut self) -> NonNull<Entry<T>> {
         unsafe {
             let entry = Entry {
                 state: Cell::new(State::Created),
@@ -820,7 +897,7 @@ impl List {
     }
 
     /// Removes an entry from the list and returns its state.
-    fn remove(&mut self, entry: NonNull<Entry>) -> State {
+    fn remove(&mut self, entry: NonNull<Entry<T>>) -> State<T> {
         unsafe {
             let prev = entry.as_ref().prev.get();
             let next = entry.as_ref().next.get();
@@ -862,6 +939,46 @@ impl List {
         }
     }
 
+    fn notify_with_token(&mut self, token: T) {
+        if self.notified > 0 {
+            return;
+        }
+
+        self.notify_internal(false, token);
+    }
+
+    fn notify_additional_with_token(&mut self, token: T) {
+        self.notify_internal(true, token);
+    }
+
+    #[inline(always)]
+    fn notify_internal(&mut self, additional: bool, token: T) -> bool {
+        // Notify the first unnotified entry.
+        if let Some(e) = self.start {
+            // Get the entry and move the pointer forward.
+            let e = unsafe { e.as_ref() };
+            self.start = e.next.get();
+
+            // Set the state of this entry to `Notified` and notify.
+            match e.state.replace(State::Notified(additional, token)) {
+                State::Notified(..) => {}
+                State::Created => {}
+                State::Polling(w) => w.wake(),
+                State::Waiting(t) => t.unpark(),
+                State::Dummy => unreachable!(),
+            }
+
+            // Update the counter.
+            self.notified += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+
+impl List<()> {
     /// Notifies a number of entries.
     #[cold]
     fn notify(&mut self, mut n: usize) {
@@ -870,58 +987,16 @@ impl List {
         }
         n -= self.notified;
 
-        while n > 0 {
+        while n > 0 && self.notify_internal(false, ()) {
             n -= 1;
-
-            // Notify the first unnotified entry.
-            match self.start {
-                None => break,
-                Some(e) => {
-                    // Get the entry and move the pointer forward.
-                    let e = unsafe { e.as_ref() };
-                    self.start = e.next.get();
-
-                    // Set the state of this entry to `Notified` and notify.
-                    match e.state.replace(State::Notified(false)) {
-                        State::Notified(_) => {}
-                        State::Created => {}
-                        State::Polling(w) => w.wake(),
-                        State::Waiting(t) => t.unpark(),
-                    }
-
-                    // Update the counter.
-                    self.notified += 1;
-                }
-            }
         }
     }
 
     /// Notifies a number of additional entries.
     #[cold]
     fn notify_additional(&mut self, mut n: usize) {
-        while n > 0 {
+        while n > 0 && self.notify_internal(true, ()) {
             n -= 1;
-
-            // Notify the first unnotified entry.
-            match self.start {
-                None => break,
-                Some(e) => {
-                    // Get the entry and move the pointer forward.
-                    let e = unsafe { e.as_ref() };
-                    self.start = e.next.get();
-
-                    // Set the state of this entry to `Notified` and notify.
-                    match e.state.replace(State::Notified(true)) {
-                        State::Notified(_) => {}
-                        State::Created => {}
-                        State::Polling(w) => w.wake(),
-                        State::Waiting(t) => t.unpark(),
-                    }
-
-                    // Update the counter.
-                    self.notified += 1;
-                }
-            }
         }
     }
 }
