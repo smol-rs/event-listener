@@ -86,6 +86,9 @@ struct Inner {
 
     /// A linked list holding registered listeners.
     list: Spinlock<List>,
+
+    /// A single cached list entry to avoid allocations on the fast path of the insertion.
+    cache: UnsafeCell<Entry>,
 }
 
 impl Inner {
@@ -95,6 +98,12 @@ impl Inner {
             inner: self,
             guard: self.list.lock(),
         }
+    }
+
+    /// Returns the pointer to the single cached list entry.
+    #[inline(always)]
+    fn cache_ptr(&self) -> NonNull<Entry> {
+        unsafe { NonNull::new_unchecked(self.cache.get()) }
     }
 }
 
@@ -166,7 +175,7 @@ impl Event {
         let inner = self.inner();
         let listener = EventListener {
             inner: unsafe { Arc::clone(&ManuallyDrop::new(Arc::from_raw(inner))) },
-            entry: Some(inner.lock().insert()),
+            entry: Some(inner.lock().insert(inner.cache_ptr())),
         };
 
         // Make sure the listener is registered before whatever happens next.
@@ -372,11 +381,11 @@ impl Event {
                     len: 0,
                     notified: 0,
                     cache_used: false,
-                    cache: UnsafeCell::new(Entry {
-                        state: Cell::new(State::Created),
-                        prev: Cell::new(None),
-                        next: Cell::new(None),
-                    }),
+                }),
+                cache: UnsafeCell::new(Entry {
+                    state: Cell::new(State::Created),
+                    prev: Cell::new(None),
+                    next: Cell::new(None),
                 }),
             });
             // Convert the heap-allocated state into a raw pointer.
@@ -563,7 +572,7 @@ impl EventListener {
             match e.state.replace(State::Notified(false)) {
                 State::Notified(_) => {
                     // If this listener has been notified, remove it from the list and return.
-                    list.remove(entry);
+                    list.remove(entry, self.inner.cache_ptr());
                     return true;
                 }
                 // Otherwise, set the state to `Waiting`.
@@ -581,11 +590,11 @@ impl EventListener {
                     let now = Instant::now();
                     if now >= deadline {
                         // Remove the entry and check if notified.
-                        if self.inner.lock().remove(entry).is_notified() {
-                            return true;
-                        } else {
-                            return false;
-                        }
+                        return self
+                            .inner
+                            .lock()
+                            .remove(entry, self.inner.cache_ptr())
+                            .is_notified();
                     }
 
                     // Park until the deadline.
@@ -600,7 +609,7 @@ impl EventListener {
             match e.state.replace(State::Notified(false)) {
                 State::Notified(_) => {
                     // If this listener has been notified, remove it from the list and return.
-                    list.remove(entry);
+                    list.remove(entry, self.inner.cache_ptr());
                     return true;
                 }
                 // Otherwise, set the state back to `Waiting`.
@@ -632,7 +641,7 @@ impl Future for EventListener {
         match state.replace(State::Notified(false)) {
             State::Notified(_) => {
                 // If this listener has been notified, remove it from the list and return.
-                list.remove(entry);
+                list.remove(entry, self.inner.cache_ptr());
                 drop(list);
                 self.entry = None;
                 return Poll::Ready(());
@@ -665,7 +674,7 @@ impl Drop for EventListener {
             let mut list = self.inner.lock();
 
             // But if a notification was delivered to it...
-            if let State::Notified(additional) = list.remove(entry) {
+            if let State::Notified(additional) = list.remove(entry, self.inner.cache_ptr()) {
                 // Then pass it on to another active listener.
                 if additional {
                     list.notify_additional(1);
@@ -776,14 +785,11 @@ struct List {
 
     /// Whether the cached entry is used.
     cache_used: bool,
-
-    /// A single cached entry to avoid allocations on the fast path.
-    cache: UnsafeCell<Entry>,
 }
 
 impl List {
     /// Inserts a new entry into the list.
-    fn insert(&mut self) -> NonNull<Entry> {
+    fn insert(&mut self, cache: NonNull<Entry>) -> NonNull<Entry> {
         unsafe {
             let entry = Entry {
                 state: Cell::new(State::Created),
@@ -797,8 +803,8 @@ impl List {
             } else {
                 // No need to allocate - we can use the cached entry.
                 self.cache_used = true;
-                *self.cache.get() = entry;
-                NonNull::new_unchecked(self.cache.get())
+                cache.as_ptr().write(entry);
+                cache
             };
 
             // Replace the tail with the new entry.
@@ -820,7 +826,7 @@ impl List {
     }
 
     /// Removes an entry from the list and returns its state.
-    fn remove(&mut self, entry: NonNull<Entry>) -> State {
+    fn remove(&mut self, entry: NonNull<Entry>, cache: NonNull<Entry>) -> State {
         unsafe {
             let prev = entry.as_ref().prev.get();
             let next = entry.as_ref().next.get();
@@ -843,7 +849,7 @@ impl List {
             }
 
             // Extract the state.
-            let state = if ptr::eq(entry.as_ptr(), self.cache.get()) {
+            let state = if ptr::eq(entry.as_ptr(), cache.as_ptr()) {
                 // Free the cached entry.
                 self.cache_used = false;
                 entry.as_ref().state.replace(State::Created)
