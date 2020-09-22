@@ -70,8 +70,8 @@ use std::ops::{Deref, DerefMut};
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::ptr::{self, NonNull};
-use std::sync::atomic::{self, AtomicBool, AtomicPtr, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
@@ -85,7 +85,7 @@ struct Inner {
     notified: AtomicUsize,
 
     /// A linked list holding registered listeners.
-    list: Spinlock<List>,
+    list: Mutex<List>,
 
     /// A single cached list entry to avoid allocations on the fast path of the insertion.
     cache: UnsafeCell<Entry>,
@@ -96,7 +96,7 @@ impl Inner {
     fn lock(&self) -> ListGuard<'_> {
         ListGuard {
             inner: self,
-            guard: self.list.lock(),
+            guard: self.list.lock().unwrap(),
         }
     }
 
@@ -374,7 +374,7 @@ impl Event {
             // Allocate on the heap.
             let new = Arc::new(Inner {
                 notified: AtomicUsize::new(usize::MAX),
-                list: Spinlock::new(List {
+                list: std::sync::Mutex::new(List {
                     head: None,
                     tail: None,
                     start: None,
@@ -722,7 +722,7 @@ struct ListGuard<'a> {
     inner: &'a Inner,
 
     /// The actual guard that acquired the linked list.
-    guard: SpinlockGuard<'a, List>,
+    guard: MutexGuard<'a, List>,
 }
 
 impl Drop for ListGuard<'_> {
@@ -982,54 +982,5 @@ fn full_fence() {
         a.compare_and_swap(0, 1, Ordering::SeqCst);
     } else {
         atomic::fence(Ordering::SeqCst);
-    }
-}
-
-/// A simple spinlock.
-struct Spinlock<T> {
-    flag: AtomicBool,
-    value: UnsafeCell<T>,
-}
-
-impl<T> Spinlock<T> {
-    /// Returns a new spinlock initialized with `value`.
-    fn new(value: T) -> Spinlock<T> {
-        Spinlock {
-            flag: AtomicBool::new(false),
-            value: UnsafeCell::new(value),
-        }
-    }
-
-    /// Locks the spinlock.
-    fn lock(&self) -> SpinlockGuard<'_, T> {
-        while self.flag.swap(true, Ordering::Acquire) {
-            thread::yield_now();
-        }
-        SpinlockGuard { parent: self }
-    }
-}
-
-/// A guard holding a spinlock locked.
-struct SpinlockGuard<'a, T> {
-    parent: &'a Spinlock<T>,
-}
-
-impl<T> Drop for SpinlockGuard<'_, T> {
-    fn drop(&mut self) {
-        self.parent.flag.store(false, Ordering::Release);
-    }
-}
-
-impl<T> Deref for SpinlockGuard<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        unsafe { &*self.parent.value.get() }
-    }
-}
-
-impl<T> DerefMut for SpinlockGuard<'_, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.parent.value.get() }
     }
 }
