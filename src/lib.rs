@@ -522,7 +522,7 @@ impl EventListener {
         self.wait_internal(Some(deadline))
     }
 
-    /// Drop this listener and discard its notification (if any) without notifying another
+    /// Drops this listener and discards its notification (if any) without notifying another
     /// active listener.
     ///
     /// Returns `true` if a notification was discarded.

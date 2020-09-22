@@ -1,3 +1,7 @@
+# Version 2.5.0
+
+- Add `EventListener::discard()`.
+
 # Version 2.4.0
 
 - `Event::new()` is now a const fn.
