@@ -1,3 +1,7 @@
+# Version 2.5.1
+
+- Replace spinlock with a mutex.
+
 # Version 2.5.0
 
 - Add `EventListener::discard()`.
