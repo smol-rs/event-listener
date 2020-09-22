@@ -522,6 +522,36 @@ impl EventListener {
         self.wait_internal(Some(deadline))
     }
 
+    /// Drop this listener and discard its notification (if any) without notifying another
+    /// active listener.
+    ///
+    /// Returns `true` if a notification was discarded.
+    ///
+    /// # Examples
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    ///
+    /// event.notify(1);
+    ///
+    /// assert!(listener1.discard());
+    /// assert!(!listener2.discard());
+    /// ```
+    pub fn discard(mut self) -> bool {
+        // If this listener has never picked up a notification...
+        if let Some(entry) = self.entry.take() {
+            let mut list = self.inner.lock();
+            // Remove the listener from the list and return `true` if it was notified.
+            if let State::Notified(_) = list.remove(entry, self.inner.cache_ptr()) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Returns `true` if this listener listens to the given `Event`.
     ///
     /// # Examples
