@@ -123,6 +123,13 @@ impl<T> Mutex<T> {
     }
 }
 
+impl<T> Drop for MutexGuard<'_, T> {
+    fn drop(&mut self) {
+        self.0.locked.store(false, Ordering::Release);
+        self.0.lock_ops.notify(1);
+    }
+}
+
 /// A guard holding a lock.
 struct MutexGuard<'a, T>(&'a Mutex<T>);
 
