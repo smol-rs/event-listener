@@ -7,7 +7,7 @@
 //! for acquiring locks.
 //!
 //! [eventcounts]: http://www.1024cores.net/home/lock-free-algorithms/eventcounts
-//! [simple mutex]: https://github.com/stjepang/event-listener/blob/master/examples/mutex.rs
+//! [simple mutex]: https://github.com/smol-rs/event-listener/blob/master/examples/mutex.rs
 //!
 //! # Examples
 //!

@@ -1,9 +1,9 @@
 # event-listener
 
-[![Build](https://github.com/stjepang/event-listener/workflows/Build%20and%20test/badge.svg)](
-https://github.com/stjepang/event-listener/actions)
+[![Build](https://github.com/smol-rs/event-listener/workflows/Build%20and%20test/badge.svg)](
+https://github.com/smol-rs/event-listener/actions)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](
-https://github.com/stjepang/event-listener)
+https://github.com/smol-rs/event-listener)
 [![Cargo](https://img.shields.io/crates/v/event-listener.svg)](
 https://crates.io/crates/event-listener)
 [![Documentation](https://docs.rs/event-listener/badge.svg)](
