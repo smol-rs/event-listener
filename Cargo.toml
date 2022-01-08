@@ -1,5 +1,8 @@
 [package]
 name = "event-listener"
+# When publishing a new version:
+# - Update CHANGELOG.md
+# - Create "v2.x.y" git tag
 version = "2.5.1"
 authors = ["Stjepan Glavina <stjepang@gmail.com>"]
 edition = "2018"
