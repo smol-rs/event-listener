@@ -69,6 +69,8 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install nightly --component miri && rustup default nightly
       - run: cargo miri test
+        env:
+          MIRIFLAGS: -Zmiri-disable-isolation
 
   security_audit:
     runs-on: ubuntu-latest
