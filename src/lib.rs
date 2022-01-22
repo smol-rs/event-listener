@@ -175,7 +175,7 @@ impl Event {
         let inner = self.inner();
         let listener = EventListener {
             inner: unsafe { Arc::clone(&ManuallyDrop::new(Arc::from_raw(inner))) },
-            entry: Some(inner.lock().insert(inner.cache_ptr())),
+            entry: unsafe { Some((*inner).lock().insert((*inner).cache_ptr())) },
         };
 
         // Make sure the listener is registered before whatever happens next.
@@ -365,8 +365,11 @@ impl Event {
         unsafe { inner.as_ref() }
     }
 
-    /// Returns a reference to the inner state, initializing it if necessary.
-    fn inner(&self) -> &Inner {
+    /// Returns a raw pointer to the inner state, initializing it if necessary.
+    ///
+    /// This returns a raw pointer instead of reference because `from_raw`
+    /// requires raw/mut provenance: <https://github.com/rust-lang/rust/pull/67339>
+    fn inner(&self) -> *const Inner {
         let mut inner = self.inner.load(Ordering::Acquire);
 
         // Initialize the state if this is its first use.
@@ -410,7 +413,7 @@ impl Event {
             }
         }
 
-        unsafe { &*inner }
+        inner
     }
 }
 
