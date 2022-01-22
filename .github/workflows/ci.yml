@@ -70,7 +70,7 @@ jobs:
         run: rustup toolchain install nightly --component miri && rustup default nightly
       - run: cargo miri test
         env:
-          MIRIFLAGS: -Zmiri-disable-isolation
+          MIRIFLAGS: -Zmiri-disable-isolation -Zmiri-tag-raw-pointers
 
   security_audit:
     runs-on: ubuntu-latest
