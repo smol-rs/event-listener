@@ -62,7 +62,6 @@
 
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 
-use std::cell::{Cell, UnsafeCell};
 use std::fmt;
 use std::future::Future;
 use std::mem::{self, ManuallyDrop};
@@ -76,6 +75,10 @@ use std::task::{Context, Poll, Waker};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
 use std::usize;
+use std::{
+    cell::{Cell, UnsafeCell},
+    marker::PhantomPinned,
+};
 
 /// Inner state of [`Event`].
 struct Inner {
@@ -181,6 +184,14 @@ impl Event {
         // Make sure the listener is registered before whatever happens next.
         full_fence();
         listener
+    }
+
+    pub fn pinned_listener(&self) -> PinnedEventListener<'_> {
+        PinnedEventListener {
+            inner: unsafe { &*self.inner() },
+            state: ListenerState::Init,
+            entry: UnsafeCell::new(Entry::new_pinned()),
+        }
     }
 
     /// Notifies a number of active listeners.
@@ -386,9 +397,11 @@ impl Event {
                     cache_used: false,
                 }),
                 cache: UnsafeCell::new(Entry {
+                    is_pinned: false,
                     state: Cell::new(State::Created),
                     prev: Cell::new(None),
                     next: Cell::new(None),
+                    _pinned: PhantomPinned,
                 }),
             });
             // Convert the heap-allocated state into a raw pointer.
@@ -722,6 +735,126 @@ impl Drop for EventListener {
     }
 }
 
+#[derive(Copy, Clone, PartialEq, Debug)]
+enum ListenerState {
+    Init,
+    Listening,
+    Done,
+}
+
+pub struct PinnedEventListener<'a> {
+    inner: &'a Inner,
+
+    state: ListenerState,
+
+    entry: UnsafeCell<Entry>,
+}
+
+impl PinnedEventListener<'_> {
+    fn project(self: Pin<&mut Self>) -> (&Inner, &mut ListenerState, Pin<&UnsafeCell<Entry>>) {
+        fn is_unpin<T: Unpin>() {}
+
+        unsafe {
+            is_unpin::<&Inner>();
+            is_unpin::<ListenerState>();
+
+            let this = self.get_unchecked_mut();
+
+            (this.inner, &mut this.state, Pin::new_unchecked(&this.entry))
+        }
+    }
+
+    pub fn listen(self: Pin<&mut Self>) {
+        let (inner, state, entry) = self.project();
+
+        if *state == ListenerState::Init {
+            inner.lock().insert_pinned(entry, None);
+            *state = ListenerState::Listening;
+        }
+
+        full_fence();
+    }
+}
+
+impl Future for PinnedEventListener<'_> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let (inner, listener_state, entry) = self.project();
+
+        if *listener_state == ListenerState::Done {
+            return Poll::Ready(());
+        }
+
+        let mut list = inner.lock();
+
+        if *listener_state == ListenerState::Init {
+            list.insert_pinned(entry, Some(cx.waker().clone()));
+            *listener_state = ListenerState::Listening;
+
+            full_fence();
+
+            return Poll::Pending;
+        }
+
+        let entry = unsafe { &mut *entry.get_ref().get() };
+        let state = &mut entry.state;
+
+        // Do a dummy replace operation in order to take out the state.
+        match state.replace(State::Notified(false)) {
+            State::Notified(_) => {
+                // If this listener has been notified, remove it from the list and return.
+                let entry = unsafe { NonNull::new_unchecked(entry as *mut _) };
+                list.remove(entry, inner.cache_ptr());
+                *listener_state = ListenerState::Done;
+
+                drop(list);
+
+                return Poll::Ready(());
+            }
+            State::Created => {
+                // If the listener was just created, put it in the `Polling` state.
+                state.set(State::Polling(cx.waker().clone()));
+            }
+            State::Polling(w) => {
+                // If the listener was in the `Polling` state, update the waker.
+                if w.will_wake(cx.waker()) {
+                    state.set(State::Polling(w));
+                } else {
+                    state.set(State::Polling(cx.waker().clone()));
+                }
+            }
+            State::Waiting(_) => {
+                unreachable!("cannot wait on a `PinnedEventListener`")
+            }
+        }
+
+        Poll::Pending
+    }
+}
+
+impl Drop for PinnedEventListener<'_> {
+    fn drop(&mut self) {
+        // If this listener has never picked up a notification...
+        if self.state == ListenerState::Listening {
+            let mut inner = self.inner.lock();
+            let entry = unsafe { NonNull::new_unchecked(self.entry.get()) };
+
+            // But if a notification was delivered to it...
+            if let State::Notified(additional) = inner.remove(entry, self.inner.cache_ptr()) {
+                // Then pass it on to another active listener.
+                if additional {
+                    inner.notify_additional(1);
+                } else {
+                    inner.notify(1);
+                }
+            }
+
+            self.state = ListenerState::Done;
+        }
+    }
+}
+
 /// A guard holding the linked list locked.
 struct ListGuard<'a> {
     /// A reference to [`Event`]'s inner state.
@@ -792,7 +925,9 @@ impl State {
 
 /// An entry representing a registered listener.
 struct Entry {
-    /// THe state of this listener.
+    is_pinned: bool,
+
+    /// The state of this listener.
     state: Cell<State>,
 
     /// Previous entry in the linked list.
@@ -800,6 +935,21 @@ struct Entry {
 
     /// Next entry in the linked list.
     next: Cell<Option<NonNull<Entry>>>,
+
+    _pinned: PhantomPinned,
+}
+
+impl Entry {
+    #[inline]
+    fn new_pinned() -> Self {
+        Self {
+            is_pinned: true,
+            state: Cell::new(State::Created),
+            prev: Cell::new(None),
+            next: Cell::new(None),
+            _pinned: PhantomPinned,
+        }
+    }
 }
 
 /// A linked list of entries.
@@ -828,9 +978,11 @@ impl List {
     fn insert(&mut self, cache: NonNull<Entry>) -> NonNull<Entry> {
         unsafe {
             let entry = Entry {
+                is_pinned: false,
                 state: Cell::new(State::Created),
                 prev: Cell::new(self.tail),
                 next: Cell::new(None),
+                _pinned: PhantomPinned,
             };
 
             let entry = if self.cache_used {
@@ -861,6 +1013,37 @@ impl List {
         }
     }
 
+    /// Inserts a pinned entry into the list.
+    fn insert_pinned(&mut self, entry: Pin<&UnsafeCell<Entry>>, waker: Option<Waker>) {
+        unsafe {
+            let state = waker.map(State::Polling).unwrap_or(State::Created);
+            let entry = &mut *entry.get_ref().get();
+            *entry = Entry {
+                is_pinned: true,
+                state: Cell::new(state),
+                prev: Cell::new(self.tail),
+                next: Cell::new(None),
+                _pinned: PhantomPinned,
+            };
+
+            let entry = NonNull::new_unchecked(entry as *mut _);
+
+            // Replace the tail with the new entry.
+            match mem::replace(&mut self.tail, Some(entry)) {
+                None => self.head = Some(entry),
+                Some(t) => t.as_ref().next.set(Some(entry)),
+            }
+
+            // If there were no unnotified entries, this one is the first now.
+            if self.start.is_none() {
+                self.start = self.tail;
+            }
+
+            // Bump the entry count.
+            self.len += 1;
+        }
+    }
+
     /// Removes an entry from the list and returns its state.
     fn remove(&mut self, entry: NonNull<Entry>, cache: NonNull<Entry>) -> State {
         unsafe {
@@ -888,6 +1071,8 @@ impl List {
             let state = if ptr::eq(entry.as_ptr(), cache.as_ptr()) {
                 // Free the cached entry.
                 self.cache_used = false;
+                entry.as_ref().state.replace(State::Created)
+            } else if entry.as_ref().is_pinned {
                 entry.as_ref().state.replace(State::Created)
             } else {
                 // Deallocate the entry.
