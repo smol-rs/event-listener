@@ -67,7 +67,8 @@ jobs:
         run: rustup toolchain install nightly --component miri && rustup default nightly
       - run: cargo miri test
         env:
-          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation
+          # TODO: remove -Zmiri-disable-weak-memory-emulation: https://github.com/smol-rs/concurrent-queue/pull/16#issuecomment-1186519851
+          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation -Zmiri-disable-weak-memory-emulation
           RUSTFLAGS: ${{ env.RUSTFLAGS }} -Z randomize-layout
 
   security_audit:
