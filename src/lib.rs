@@ -984,8 +984,10 @@ fn full_fence() {
         // The ideal solution here would be to use inline assembly, but we're instead creating a
         // temporary atomic variable and compare-and-exchanging its value. No sane compiler to
         // x86 platforms is going to optimize this away.
+        atomic::compiler_fence(Ordering::SeqCst);
         let a = AtomicUsize::new(0);
         let _ = a.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst);
+        atomic::compiler_fence(Ordering::SeqCst);
     } else {
         atomic::fence(Ordering::SeqCst);
     }
