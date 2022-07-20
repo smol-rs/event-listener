@@ -971,7 +971,10 @@ impl List {
 /// Equivalent to `atomic::fence(Ordering::SeqCst)`, but in some cases faster.
 #[inline]
 fn full_fence() {
-    if cfg!(any(target_arch = "x86", target_arch = "x86_64")) {
+    if cfg!(all(
+        any(target_arch = "x86", target_arch = "x86_64"),
+        not(miri)
+    )) {
         // HACK(stjepang): On x86 architectures there are two different ways of executing
         // a `SeqCst` fence.
         //
