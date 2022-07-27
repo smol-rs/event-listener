@@ -1,3 +1,7 @@
+# Version 2.5.3
+
+- Fix fence on x86 and miri.
+
 # Version 2.5.2
 
 - Fix stacked borrows violation when `-Zmiri-tag-raw-pointers` is enabled. (#24)
