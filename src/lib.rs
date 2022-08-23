@@ -930,7 +930,9 @@ impl List {
                         State::Notified(_) => {}
                         State::Created => {}
                         State::Polling(w) => w.wake(),
-                        State::Waiting(t) => { t.unpark(); },
+                        State::Waiting(t) => {
+                            t.unpark();
+                        }
                     }
 
                     // Update the counter.
@@ -959,7 +961,9 @@ impl List {
                         State::Notified(_) => {}
                         State::Created => {}
                         State::Polling(w) => w.wake(),
-                        State::Waiting(t) => { t.unpark(); },
+                        State::Waiting(t) => {
+                            t.unpark();
+                        }
                     }
 
                     // Update the counter.
