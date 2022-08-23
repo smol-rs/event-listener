@@ -14,6 +14,8 @@ keywords = ["condvar", "eventcount", "wake", "blocking", "park"]
 categories = ["asynchronous", "concurrency"]
 exclude = ["/.*"]
 
+[dependencies]
+parking = "2.0.0"
+
 [dev-dependencies]
-futures = { version = "0.3", default-features = false, features = ["std"] }
 waker-fn = "1"

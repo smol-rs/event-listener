@@ -73,9 +73,10 @@ use std::ptr::{self, NonNull};
 use std::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
-use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
 use std::usize;
+
+use parking::Unparker;
 
 /// Inner state of [`Event`].
 struct Inner {
@@ -598,6 +599,7 @@ impl EventListener {
             None => unreachable!("cannot wait twice on an `EventListener`"),
             Some(entry) => entry,
         };
+        let (parker, unparker) = parking::pair();
 
         // Set this listener's state to `Waiting`.
         {
@@ -612,14 +614,14 @@ impl EventListener {
                     return true;
                 }
                 // Otherwise, set the state to `Waiting`.
-                _ => e.state.set(State::Waiting(thread::current())),
+                _ => e.state.set(State::Waiting(unparker)),
             }
         }
 
         // Wait until a notification is received or the timeout is reached.
         loop {
             match deadline {
-                None => thread::park(),
+                None => parker.park(),
 
                 Some(deadline) => {
                     // Check for timeout.
@@ -634,7 +636,7 @@ impl EventListener {
                     }
 
                     // Park until the deadline.
-                    thread::park_timeout(deadline - now);
+                    parker.park_timeout(deadline - now);
                 }
             }
 
@@ -776,7 +778,7 @@ enum State {
     Polling(Waker),
 
     /// A thread is blocked on it.
-    Waiting(Thread),
+    Waiting(Unparker),
 }
 
 impl State {
@@ -792,7 +794,7 @@ impl State {
 
 /// An entry representing a registered listener.
 struct Entry {
-    /// THe state of this listener.
+    /// The state of this listener.
     state: Cell<State>,
 
     /// Previous entry in the linked list.
@@ -928,7 +930,7 @@ impl List {
                         State::Notified(_) => {}
                         State::Created => {}
                         State::Polling(w) => w.wake(),
-                        State::Waiting(t) => t.unpark(),
+                        State::Waiting(t) => { t.unpark(); },
                     }
 
                     // Update the counter.
@@ -957,7 +959,7 @@ impl List {
                         State::Notified(_) => {}
                         State::Created => {}
                         State::Polling(w) => w.wake(),
-                        State::Waiting(t) => t.unpark(),
+                        State::Waiting(t) => { t.unpark(); },
                     }
 
                     // Update the counter.
