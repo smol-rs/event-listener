@@ -15,7 +15,15 @@ categories = ["asynchronous", "concurrency"]
 exclude = ["/.*"]
 
 [dependencies]
-parking = "2.0.0"
+concurrent-queue = { git = "https://github.com/smol-rs/concurrent-queue.git", default-features = false }
+parking = { version = "2", optional = true }
+
+[target.'cfg(loom)'.dependencies]
+loom = "0.5"
+
+[features]
+default = ["std"]
+std = ["parking", "concurrent-queue/std"]
 
 [dev-dependencies]
 criterion = "0.3.4"
