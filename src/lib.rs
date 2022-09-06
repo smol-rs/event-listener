@@ -73,7 +73,7 @@ use alloc::sync::Arc;
 
 use core::fmt;
 use core::future::Future;
-use core::mem::{ManuallyDrop, MaybeUninit};
+use core::mem::{ManuallyDrop, MaybeUninit, forget};
 use core::ptr;
 use core::task::{Context, Poll, Waker};
 
@@ -711,12 +711,16 @@ impl Listener {
                     }
 
                     // We now hold the "lock" on the task slot. Write the task to the slot.
+                    let guard = ResetState(&self.state, state);
+                    let task = task();
+                    forget(guard);
+
                     let task = self.task.with_mut(|slot| unsafe {
-                        // If there already was a task, swap it out and wake it instead of replacing it.
+                        // If there already was a task, swap it out and wake it.
                         if state == State::Task {
-                            Some(ptr::replace(slot.cast(), (task)()))
+                            Some(ptr::replace(slot.cast(), task))
                         } else {
-                            ptr::write(slot.cast(), (task)());
+                            ptr::write(slot.cast(), task);
                             None
                         }
                     });
@@ -742,6 +746,18 @@ impl Listener {
                     return true;
                 }
                 State::Orphaned => unreachable!("orphaned listener"),
+            }
+
+            /// The task() closure may clone a user-defined waker, which can panic.
+            /// 
+            /// This panic would leave the listener in the `WritingTask` state, which will
+            /// lead to an infinite loop. This guard resets it back to the original state.
+            struct ResetState<'a>(&'a AtomicUsize, State);
+
+            impl Drop for ResetState<'_> {
+                fn drop(&mut self) {
+                    self.0.store(self.1.into(), Release);
+                }
             }
         }
     }
