@@ -46,9 +46,7 @@ mod sync_impl {
 #[cfg(loom)]
 mod sync_impl {
     pub(crate) use loom::cell::UnsafeCell;
-    pub(crate) use loom::sync::atomic::{
-        fence, AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering,
-    };
+    pub(crate) use loom::sync::atomic::{fence, AtomicPtr, AtomicUsize, Ordering};
 
     /// Re-implementation of `parking::pair` based on loom.
     pub(crate) fn pair() -> (Parker, Unparker) {
@@ -69,6 +67,7 @@ mod sync_impl {
     }
 
     /// Re-implementation of `parking::Unparker` based on loom.
+    #[derive(Clone)]
     pub(crate) struct Unparker(loom::thread::Thread);
 
     impl Unparker {
@@ -76,6 +75,9 @@ mod sync_impl {
             self.0.unpark();
         }
     }
+
+    #[allow(dead_code)]
+    pub(crate) trait AtomicWithMut {}
 }
 
 pub(crate) use sync_impl::*;

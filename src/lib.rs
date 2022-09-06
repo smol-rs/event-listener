@@ -525,6 +525,7 @@ impl EventListener {
     /// // There are no notification so this times out.
     /// assert!(!listener.wait_timeout(Duration::from_secs(1)));
     /// ```
+    #[cfg(not(loom))]
     pub fn wait_timeout(self, duration: Duration) -> bool {
         self.wait_internal(Instant::now().checked_add(duration))
     }
@@ -545,6 +546,7 @@ impl EventListener {
     /// // There are no notification so this times out.
     /// assert!(!listener.wait_deadline(Instant::now() + Duration::from_secs(1)));
     /// ```
+    #[cfg(not(loom))]
     pub fn wait_deadline(self, deadline: Instant) -> bool {
         self.wait_internal(Some(deadline))
     }
@@ -568,9 +570,15 @@ impl EventListener {
             // Park the thread and see if we have been notified.
             match deadline {
                 Some(deadline) => {
-                    if !parker.park_deadline(deadline) {
-                        // The timeout elapsed. Return false.
-                        break false;
+                    #[cfg(loom)]
+                    panic!("`wait_deadline` is not supported with loom");
+
+                    #[cfg(not(loom))]
+                    {
+                        if !parker.park_deadline(deadline) {
+                            // The timeout elapsed. Return false.
+                            break false;
+                        }
                     }
                 }
                 None => parker.park(),
@@ -705,7 +713,7 @@ impl Listener {
                     // We now hold the "lock" on the task slot. Write the task to the slot.
                     let task = self.task.with_mut(|slot| unsafe {
                         // If there already was a task, swap it out and wake it instead of replacing it.
-                        if matches!(state, State::Task) {
+                        if state == State::Task {
                             Some(ptr::replace(slot.cast(), (task)()))
                         } else {
                             ptr::write(slot.cast(), (task)());
@@ -886,7 +894,7 @@ impl Drop for Listener {
 }
 
 /// The state that a `Listener` can be in.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(usize)]
 enum State {
     /// The listener was just created.
