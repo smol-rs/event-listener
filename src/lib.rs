@@ -73,7 +73,7 @@ use alloc::sync::Arc;
 
 use core::fmt;
 use core::future::Future;
-use core::mem::{ManuallyDrop, MaybeUninit, forget};
+use core::mem::{forget, ManuallyDrop, MaybeUninit};
 use core::ptr;
 use core::task::{Context, Poll, Waker};
 
@@ -749,7 +749,7 @@ impl Listener {
             }
 
             /// The task() closure may clone a user-defined waker, which can panic.
-            /// 
+            ///
             /// This panic would leave the listener in the `WritingTask` state, which will
             /// lead to an infinite loop. This guard resets it back to the original state.
             struct ResetState<'a>(&'a AtomicUsize, State);
