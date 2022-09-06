@@ -392,6 +392,19 @@ impl fmt::Debug for Event {
     }
 }
 
+impl Drop for Event {
+    fn drop(&mut self) {
+        // Drop the inner state.
+        self.inner.with_mut(|inner| {
+            if !inner.is_null() {
+                unsafe {
+                    drop(Arc::<Inner>::from_raw(*inner));
+                }
+            }
+        });
+    }
+}
+
 /// A guard waiting for a notification from an [`Event`].
 pub struct EventListener {
     /// The reference to the original linked list.
@@ -672,46 +685,55 @@ impl Listener {
     ///
     /// Returns `true` if the listener was notified.
     fn wait(&self, task: impl FnOnce() -> Task) -> bool {
-        // Eagerly assume that we are in `Created` state, and that we want to
-        // transition to writing our task.
+        let mut state = self.state.load(Acquire).into();
+
         loop {
-            match self
-                .state
-                .compare_exchange(
-                    State::Created.into(),
-                    State::WritingTask.into(),
-                    AcqRel,
-                    Acquire,
-                )
-                .map(State::from)
-                .map_err(State::from)
-            {
-                Ok(State::Created) => {
+            match state {
+                State::Created | State::Task => {
+                    // Try to "lock" the listener.
+                    if let Err(e) = self.state.compare_exchange(
+                        state.into(),
+                        State::WritingTask.into(),
+                        SeqCst,
+                        SeqCst,
+                    ) {
+                        state = e.into();
+                        busy_wait();
+                        continue;
+                    }
+
                     // We now hold the "lock" on the task slot. Write the task to the slot.
-                    self.task.with_mut(|slot| unsafe {
-                        ptr::write(slot, MaybeUninit::new((task)()));
+                    let task = self.task.with_mut(|slot| unsafe {
+                        // If there already was a task, swap it out and wake it instead of replacing it.
+                        if matches!(state, State::Task) {
+                            Some(ptr::replace(slot.cast(), (task)()))
+                        } else {
+                            ptr::write(slot.cast(), (task)());
+                            None
+                        }
                     });
 
                     // We are done writing to the task slot. Transition to `Task`.
                     // No other thread can transition to `Task` from `WritingTask`.
                     self.state.store(State::Task.into(), Release);
 
+                    // If we yielded a task, wake it now.
+                    if let Some(task) = task {
+                        task.wake();
+                    }
+
                     // Now, we should wait for a notification.
                     return false;
                 }
-                Err(State::WritingTask) => {
+                State::WritingTask => {
                     // We must be in the process of being woken up. Wait for the task to be written.
                     busy_wait();
                 }
-                Err(State::Notified | State::NotifiedAdditional) => {
+                State::Notified | State::NotifiedAdditional => {
                     // We were already notified. We are done.
                     return true;
                 }
-                Err(State::Task) => {
-                    // The task is still there. Wait for it to be removed.
-                    return false;
-                }
-                state => unreachable!("Unintelligible state: {:?}", state),
+                State::Orphaned => unreachable!("orphaned listener"),
             }
         }
     }
@@ -800,6 +822,7 @@ impl Listener {
                     ) {
                         // We failed to transition to `Orphaned`. Try again.
                         state = new_state.into();
+                        busy_wait();
                         continue;
                     }
 
@@ -912,6 +935,7 @@ impl From<State> for usize {
 enum Task {
     /// The task is an async task waiting on a `Waker`.
     Waker(Waker),
+
     /// The task is a thread blocked on the `Unparker`.
     #[cfg(feature = "std")]
     Thread(Unparker),
@@ -931,7 +955,11 @@ impl Task {
 
 /// Indicate to the compiler/scheduler that we're in a spin loop.
 fn busy_wait() {
+    #[cfg(feature = "std")]
+    std::thread::yield_now();
+
     #[allow(deprecated)]
+    #[cfg(not(feature = "std"))]
     core::sync::atomic::spin_loop_hint();
 }
 
