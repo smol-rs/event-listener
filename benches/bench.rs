@@ -3,7 +3,7 @@ use event_listener::Event;
 
 const COUNT: usize = 8000;
 
-fn bench_events(c: &mut Criterion) { 
+fn bench_events(c: &mut Criterion) {
     c.bench_function("notify_and_wait", |b| {
         let ev = Event::new();
         b.iter(|| {
