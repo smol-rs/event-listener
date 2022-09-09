@@ -25,4 +25,12 @@ portable-atomic-util = { version = "0.1.5", features = ["alloc"], optional = tru
 
 [dev-dependencies]
 futures-lite = "2.3.0"
+criterion = "0.3.4"
 waker-fn = "1"
+
+[[bench]]
+name = "bench"
+harness = false
+
+[lib]
+bench = false
