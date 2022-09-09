@@ -26,4 +26,12 @@ portable-atomic-util = { version = "0.1.5", optional = true }
 [dev-dependencies]
 futures = { version = "0.3", default-features = false, features = ["std"] }
 futures-lite = "2.3.0"
+criterion = { version = "0.3.4", default-features = false, features = ["cargo_bench_support"] }
 waker-fn = "1"
+
+[[bench]]
+name = "bench"
+harness = false
+
+[lib]
+bench = false
