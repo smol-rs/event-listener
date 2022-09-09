@@ -57,7 +57,7 @@
 //!
 //!     // Wait for a notification and continue the loop.
 //!     listener.wait();
-//! } 
+//! }
 //! # // Sleep to prevent MIRI failure, https://github.com/rust-lang/miri/issues/1371
 //! # std::thread::sleep(std::time::Duration::from_secs(3));
 //! ```
