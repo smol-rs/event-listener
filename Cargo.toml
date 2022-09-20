@@ -15,11 +15,15 @@ categories = ["asynchronous", "concurrency"]
 exclude = ["/.*"]
 
 [dependencies]
-concurrent-queue = { git = "https://github.com/smol-rs/concurrent-queue.git", default-features = false }
+concurrent-queue = { git = "https://github.com/smol-rs/concurrent-queue.git", branch = "loom", default-features = false }
 parking = { version = "2", optional = true }
+portable-atomic = { version = "0.3", default-features = false, optional = true }
 
+# Enables loom testing. This feature is permanently unstable and the API may
+# change at any time.
 [target.'cfg(loom)'.dependencies]
-loom = "0.5"
+loom = { version = "0.5", optional = true }
+concurrent-queue = { git = "https://github.com/smol-rs/concurrent-queue.git", branch = "loom", features = ["loom"] }
 
 [features]
 default = ["std"]

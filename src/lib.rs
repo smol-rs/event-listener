@@ -61,6 +61,18 @@
 //! # // Sleep to prevent MIRI failure, https://github.com/rust-lang/miri/issues/1371
 //! # std::thread::sleep(std::time::Duration::from_secs(3));
 //! ```
+//!
+//! # Features
+//!
+//! There is also a `portable-atomic` feature, which uses a polyfill from the
+//! [`portable-atomic`] crate to provide atomic operations on platforms that do not support them.
+//! See the [`README`] for the [`portable-atomic`] crate for more information on how to use it on
+//! single-threaded targets. Note that even with this feature enabled, `event-listener` still
+//! requires a global allocator to be available. See the documentation for the
+//! [`std::alloc::GlobalAlloc`] trait for more information.
+//!
+//! [`portable-atomic`]: https://crates.io/crates/portable-atomic
+//! [`README`]: https://github.com/taiki-e/portable-atomic/blob/main/README.md#optional-cfg
 
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 #![no_std]
@@ -81,16 +93,19 @@ use core::task::{Context, Poll, Waker};
 
 #[cfg(feature = "std")]
 use std::panic::{RefUnwindSafe, UnwindSafe};
+#[cfg(all(feature = "std", not(loom)))]
+use std::time::Duration;
 #[cfg(feature = "std")]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use concurrent_queue::ConcurrentQueue;
 
-use sync::{
-    AtomicPtr, AtomicUsize, AtomicWithMut,
-    Ordering::{self, AcqRel, Acquire, Release, SeqCst},
-    UnsafeCell,
-};
+use sync::atomic::Ordering::{self, AcqRel, Acquire, Release, SeqCst};
+use sync::atomic::{AtomicPtr, AtomicUsize};
+use sync::UnsafeCell;
+
+#[cfg(not(loom))]
+use sync::AtomicWithMut;
 
 #[cfg(feature = "std")]
 use sync::{pair, Unparker};
@@ -573,7 +588,10 @@ impl EventListener {
             match deadline {
                 Some(deadline) => {
                     #[cfg(loom)]
-                    panic!("`wait_deadline` is not supported with loom");
+                    {
+                        let _ = deadline;
+                        panic!("`wait_deadline` is not supported with loom");
+                    }
 
                     #[cfg(not(loom))]
                     {
@@ -870,6 +888,7 @@ impl Listener {
                     ) {
                         // Someone else got to it before we did.
                         state = new_state.into();
+                        busy_wait();
                         continue;
                     }
 
@@ -982,7 +1001,7 @@ impl Task {
 /// Indicate to the compiler/scheduler that we're in a spin loop.
 fn busy_wait() {
     #[cfg(feature = "std")]
-    std::thread::yield_now();
+    sync::thread::yield_now();
 
     #[allow(deprecated)]
     #[cfg(not(feature = "std"))]
@@ -991,5 +1010,28 @@ fn busy_wait() {
 
 #[inline]
 fn full_fence() {
-    sync::fence(SeqCst);
+    if cfg!(all(
+        any(target_arch = "x86", target_arch = "x86_64"),
+        not(miri),
+        not(loom)
+    )) {
+        // HACK(stjepang): On x86 architectures there are two different ways of executing
+        // a `SeqCst` fence.
+        //
+        // 1. `atomic::fence(SeqCst)`, which compiles into a `mfence` instruction.
+        // 2. `_.compare_exchange(_, _, SeqCst, SeqCst)`, which compiles into a `lock cmpxchg` instruction.
+        //
+        // Both instructions have the effect of a full barrier, but empirical benchmarks have shown
+        // that the second one is sometimes a bit faster.
+        //
+        // The ideal solution here would be to use inline assembly, but we're instead creating a
+        // temporary atomic variable and compare-and-exchanging its value. No sane compiler to
+        // x86 platforms is going to optimize this away.
+        sync::atomic::compiler_fence(Ordering::SeqCst);
+        let a = AtomicUsize::new(0);
+        let _ = a.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst);
+        sync::atomic::compiler_fence(Ordering::SeqCst);
+    } else {
+        sync::atomic::fence(Ordering::SeqCst);
+    }
 }
