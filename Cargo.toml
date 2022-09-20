@@ -23,7 +23,7 @@ portable-atomic = { version = "0.3", default-features = false, optional = true }
 # change at any time.
 [target.'cfg(loom)'.dependencies]
 loom = { version = "0.5", optional = true }
-concurrent-queue = { git = "https://github.com/smol-rs/concurrent-queue.git", branch = "loom", features = ["loom"] }
+concurrent-queue = { git = "https://github.com/smol-rs/concurrent-queue.git", branch = "loom", default-features = false, features = ["loom"] }
 
 [features]
 default = ["std"]
