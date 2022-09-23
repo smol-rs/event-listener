@@ -64,7 +64,7 @@
 //!
 //! # Features
 //!
-//! There is also a `portable-atomic` feature, which uses a polyfill from the
+//! There is a `portable-atomic` feature, which uses a polyfill from the
 //! [`portable-atomic`] crate to provide atomic operations on platforms that do not support them.
 //! See the [`README`] for the [`portable-atomic`] crate for more information on how to use it on
 //! single-threaded targets. Note that even with this feature enabled, `event-listener` still
