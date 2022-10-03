@@ -81,18 +81,17 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
+mod listener;
 mod sync;
 
 use alloc::sync::Arc;
 
 use core::fmt;
 use core::future::Future;
-use core::mem::{forget, ManuallyDrop, MaybeUninit};
-use core::ptr;
-use core::task::{Context, Poll, Waker};
+use core::mem::ManuallyDrop;
+use core::ptr::{self, NonNull};
+use core::task::{Context, Poll};
 
-#[cfg(feature = "std")]
-use std::panic::{RefUnwindSafe, UnwindSafe};
 #[cfg(all(feature = "std", not(loom)))]
 use std::time::Duration;
 #[cfg(feature = "std")]
@@ -100,20 +99,25 @@ use std::time::Instant;
 
 use concurrent_queue::ConcurrentQueue;
 
-use sync::atomic::Ordering::{self, AcqRel, Acquire, Release, SeqCst};
+use listener::{CachedListener, Listener, Task};
+use sync::atomic::Ordering::{self, AcqRel, Acquire, Release};
 use sync::atomic::{AtomicPtr, AtomicUsize};
-use sync::UnsafeCell;
 
 #[cfg(not(loom))]
 use sync::AtomicWithMut;
 
 #[cfg(feature = "std")]
-use sync::{pair, Unparker};
+use sync::pair;
 
 /// Inner state for an `Event`.
 struct Inner {
     /// The queue that contains the listeners.
-    queue: ConcurrentQueue<Arc<Listener>>,
+    ///
+    /// The pointers to the listeners are either heap-allocated or stored in the cache.
+    queue: ConcurrentQueue<NonNull<Listener>>,
+
+    /// A cached listener, used to avoid unnecessary heap allocation.
+    cached: CachedListener,
 
     /// The number of non-notified entries in the queue.
     len: AtomicUsize,
@@ -172,8 +176,8 @@ impl Event {
         let inner = unsafe { ManuallyDrop::new(Arc::from_raw(self.inner())) };
 
         // Create a new listener in the queue.
-        let entry = Arc::new(Listener::default());
-        inner.queue.push(entry.clone()).ok();
+        let entry = Listener::alloc(&inner);
+        inner.queue.push(entry).ok();
 
         let listener = EventListener {
             inner: Arc::clone(&*inner),
@@ -373,6 +377,7 @@ impl Event {
             // Allocate on the heap.
             let new = Arc::new(Inner {
                 queue: ConcurrentQueue::unbounded(),
+                cached: CachedListener::default(),
                 len: AtomicUsize::new(0),
                 notified: AtomicUsize::new(0),
             });
@@ -414,9 +419,14 @@ impl Drop for Event {
         // Drop the inner state.
         self.inner.with_mut(|inner| {
             if !inner.is_null() {
-                unsafe {
-                    drop(Arc::<Inner>::from_raw(*inner));
+                // Get the Arc and notify all remaining listeners.
+                let inner = unsafe { Arc::<Inner>::from_raw(*inner) };
+
+                while let Ok(listener) = inner.queue.pop() {
+                    Listener::notify(listener, false, &inner);
                 }
+
+                drop(inner);
             }
         });
     }
@@ -428,7 +438,7 @@ pub struct EventListener {
     inner: Arc<Inner>,
 
     /// The specific entry that this listener is listening on.
-    entry: Option<Arc<Listener>>,
+    entry: Option<NonNull<Listener>>,
 }
 
 impl EventListener {
@@ -493,7 +503,7 @@ impl EventListener {
         self.inner.len.fetch_sub(1, Release);
 
         if let Some(entry) = self.entry.take() {
-            if let Some(additional) = entry.orphan() {
+            if let Some(additional) = Listener::orphan(entry, &self.inner) {
                 // Decrement the number of notified entries.
                 self.inner.notified.fetch_sub(1, Release);
                 return Some(additional);
@@ -570,7 +580,7 @@ impl EventListener {
 
     fn wait_internal(mut self, deadline: Option<Instant>) -> bool {
         // Take out the entry.
-        let entry = self.entry.as_ref().expect("already waited");
+        let entry = self.entry.expect("already waited");
 
         // Create a parker/unparker pair.
         let (parker, unparker) = pair();
@@ -579,7 +589,7 @@ impl EventListener {
         let notified = loop {
             let unparker = unparker.clone();
 
-            if entry.wait(move || Task::Thread(unparker)) {
+            if Listener::wait(entry, move || Task::Thread(unparker)) {
                 // We have been notified.
                 break true;
             }
@@ -622,9 +632,9 @@ impl Future for EventListener {
     type Output = ();
 
     fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let entry = self.entry.as_ref().expect("already waited");
+        let entry = self.entry.expect("already waited");
 
-        if entry.wait(|| Task::Waker(cx.waker().clone())) {
+        if Listener::wait(entry, || Task::Waker(cx.waker().clone())) {
             self.orphan();
             Poll::Ready(())
         } else {
@@ -664,6 +674,7 @@ impl Inner {
         self.notify_internal(n, true)
     }
 
+    #[cold]
     fn notify_internal(&self, mut n: usize, additional: bool) {
         while n > 0 {
             n -= 1;
@@ -672,327 +683,11 @@ impl Inner {
             match self.queue.pop() {
                 Err(_) => break,
                 Ok(entry) => {
-                    if entry.notify(additional) {
+                    if Listener::notify(entry, additional, self) {
                         // Increment the number of notified entries.
                         self.notified.fetch_add(1, Release);
                     }
                 }
-            }
-        }
-    }
-}
-
-/// The internal listener for the `Event`.
-struct Listener {
-    /// The current state of the listener.
-    state: AtomicUsize,
-
-    /// The task that this listener is blocked on.
-    task: UnsafeCell<MaybeUninit<Task>>,
-}
-
-unsafe impl Send for Listener {}
-unsafe impl Sync for Listener {}
-
-#[cfg(feature = "std")]
-impl UnwindSafe for Listener {}
-#[cfg(feature = "std")]
-impl RefUnwindSafe for Listener {}
-
-impl Default for Listener {
-    fn default() -> Self {
-        Self {
-            state: AtomicUsize::new(State::Created.into()),
-            task: UnsafeCell::new(MaybeUninit::uninit()),
-        }
-    }
-}
-
-impl Listener {
-    /// Begin waiting on this `Listener`.
-    ///
-    /// Returns `true` if the listener was notified.
-    fn wait(&self, task: impl FnOnce() -> Task) -> bool {
-        let mut state = self.state.load(Acquire).into();
-
-        loop {
-            match state {
-                State::Created | State::Task => {
-                    // Try to "lock" the listener.
-                    if let Err(e) = self.state.compare_exchange(
-                        state.into(),
-                        State::WritingTask.into(),
-                        SeqCst,
-                        SeqCst,
-                    ) {
-                        state = e.into();
-                        busy_wait();
-                        continue;
-                    }
-
-                    // We now hold the "lock" on the task slot. Write the task to the slot.
-                    let guard = ResetState(&self.state, state);
-                    let task = task();
-                    forget(guard);
-
-                    let task = self.task.with_mut(|slot| unsafe {
-                        // If there already was a task, swap it out and wake it.
-                        if state == State::Task {
-                            Some(ptr::replace(slot.cast(), task))
-                        } else {
-                            ptr::write(slot.cast(), task);
-                            None
-                        }
-                    });
-
-                    // We are done writing to the task slot. Transition to `Task`.
-                    // No other thread can transition to `Task` from `WritingTask`.
-                    self.state.store(State::Task.into(), Release);
-
-                    // If we yielded a task, wake it now.
-                    if let Some(task) = task {
-                        task.wake();
-                    }
-
-                    // Now, we should wait for a notification.
-                    return false;
-                }
-                State::WritingTask => {
-                    // We must be in the process of being woken up. Wait for the task to be written.
-                    busy_wait();
-                }
-                State::Notified | State::NotifiedAdditional => {
-                    // We were already notified. We are done.
-                    return true;
-                }
-                State::Orphaned => unreachable!("orphaned listener"),
-            }
-
-            /// The task() closure may clone a user-defined waker, which can panic.
-            ///
-            /// This panic would leave the listener in the `WritingTask` state, which will
-            /// lead to an infinite loop. This guard resets it back to the original state.
-            struct ResetState<'a>(&'a AtomicUsize, State);
-
-            impl Drop for ResetState<'_> {
-                fn drop(&mut self) {
-                    self.0.store(self.1.into(), Release);
-                }
-            }
-        }
-    }
-
-    /// Notify this `Listener`.
-    ///
-    /// Returns `true` if the listener was successfully notified.
-    fn notify(&self, additional: bool) -> bool {
-        let new_state = if additional {
-            State::NotifiedAdditional
-        } else {
-            State::Notified
-        };
-
-        loop {
-            let state = self.state.load(Acquire).into();
-
-            // Determine what state we're in.
-            match state {
-                State::Created | State::Notified | State::NotifiedAdditional => {
-                    // Indicate that the listener was notified.
-                    if self
-                        .state
-                        .compare_exchange(state.into(), new_state.into(), AcqRel, Acquire)
-                        .is_ok()
-                    {
-                        return true;
-                    }
-                }
-                State::WritingTask => {
-                    // The listener is currently writing the task, wait until they finish.
-                }
-                State::Task => {
-                    if self
-                        .state
-                        .compare_exchange(
-                            State::Task.into(),
-                            State::WritingTask.into(),
-                            AcqRel,
-                            Acquire,
-                        )
-                        .is_err()
-                    {
-                        // Someone else got to it before we did.
-                        continue;
-                    }
-
-                    // SAFETY: Since we hold the lock, we can now read out the primitive.
-                    let task = self
-                        .task
-                        .with_mut(|task| unsafe { ptr::read(task.cast::<Task>()) });
-
-                    // SAFETY: No other code makes a change when `WritingTask` is detected.
-                    self.state.store(new_state.into(), Release);
-
-                    // Wake the task up and return.
-                    task.wake();
-                    return true;
-                }
-                State::Orphaned => {
-                    // This task is no longer being monitored.
-                    return false;
-                }
-            }
-
-            busy_wait();
-        }
-    }
-
-    /// Orphan this `Listener`.
-    ///
-    /// Returns `Some<bool>` if a notification was discarded. The `bool` is `true`
-    /// if the notification was an additional notification.
-    fn orphan(&self) -> Option<bool> {
-        let mut state = self.state.load(Acquire).into();
-
-        loop {
-            match state {
-                State::Created | State::Notified | State::NotifiedAdditional => {
-                    // Indicate that the listener was notified.
-                    if let Err(new_state) = self.state.compare_exchange(
-                        state.into(),
-                        State::Orphaned.into(),
-                        AcqRel,
-                        Acquire,
-                    ) {
-                        // We failed to transition to `Orphaned`. Try again.
-                        state = new_state.into();
-                        busy_wait();
-                        continue;
-                    }
-
-                    match state {
-                        State::Notified => return Some(false),
-                        State::NotifiedAdditional => return Some(true),
-                        _ => return None,
-                    }
-                }
-                State::WritingTask => {
-                    // We're in the middle of being notified, wait for them to finish writing first.
-                }
-                State::Task => {
-                    if let Err(new_state) = self.state.compare_exchange(
-                        State::Task.into(),
-                        State::WritingTask.into(),
-                        AcqRel,
-                        Acquire,
-                    ) {
-                        // Someone else got to it before we did.
-                        state = new_state.into();
-                        busy_wait();
-                        continue;
-                    }
-
-                    // SAFETY: Since we hold the lock, we can now drop the primitive.
-                    self.task
-                        .with_mut(|task| unsafe { ptr::drop_in_place(task.cast::<Task>()) });
-
-                    // SAFETY: No other code makes a change when `WritingTask` is detected.
-                    self.state.store(State::Orphaned.into(), Release);
-
-                    // We did not discard a notification.
-                    return None;
-                }
-                State::Orphaned => {
-                    // We have already been orphaned.
-                    return None;
-                }
-            }
-
-            busy_wait();
-            state = self.state.load(Acquire).into();
-        }
-    }
-}
-
-impl Drop for Listener {
-    fn drop(&mut self) {
-        let Self {
-            ref mut state,
-            ref mut task,
-        } = self;
-
-        state.with_mut(|state| {
-            if let State::Task = (*state).into() {
-                // We're still holding onto a task, drop it.
-                task.with_mut(|task| unsafe { ptr::drop_in_place(task.cast::<Task>()) });
-            }
-        });
-    }
-}
-
-/// The state that a `Listener` can be in.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-#[repr(usize)]
-enum State {
-    /// The listener was just created.
-    Created,
-
-    /// The listener has been notified through `notify()`.
-    Notified,
-
-    /// The listener has been notified through `notify_additional()`.
-    NotifiedAdditional,
-
-    /// The listener is being used to hold a task.
-    ///
-    /// If the listener is in this state, then the `task` field is guaranteed to
-    /// be initialized.
-    Task,
-
-    /// The `task` field is being written to.
-    WritingTask,
-
-    /// The listener is being dropped.
-    Orphaned,
-}
-
-impl From<usize> for State {
-    fn from(val: usize) -> Self {
-        match val {
-            0 => State::Created,
-            1 => State::Notified,
-            2 => State::NotifiedAdditional,
-            3 => State::Task,
-            4 => State::WritingTask,
-            5 => State::Orphaned,
-            _ => unreachable!("invalid state"),
-        }
-    }
-}
-
-impl From<State> for usize {
-    fn from(state: State) -> Self {
-        state as usize
-    }
-}
-
-/// The task to wake up once a notification is received.
-enum Task {
-    /// The task is an async task waiting on a `Waker`.
-    Waker(Waker),
-
-    /// The task is a thread blocked on the `Unparker`.
-    #[cfg(feature = "std")]
-    Thread(Unparker),
-}
-
-impl Task {
-    fn wake(self) {
-        match self {
-            Self::Waker(waker) => waker.wake(),
-            #[cfg(feature = "std")]
-            Self::Thread(unparker) => {
-                unparker.unpark();
             }
         }
     }

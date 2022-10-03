@@ -20,6 +20,18 @@ fn bench_events(c: &mut Criterion) {
             }
         });
     });
+
+    c.bench_function("notify_single", |b| {
+        let ev = Event::new();
+
+        b.iter(|| {
+            for _ in 0..COUNT {
+                let handle = ev.listen();
+                ev.notify(1);
+                handle.wait();
+            }
+        });
+    });
 }
 
 criterion_group!(benches, bench_events);
