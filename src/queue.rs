@@ -135,6 +135,11 @@ impl ListenerQueue {
                 .compare_exchange(head, next, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
+                // If we just set the head to zero, set the tail to zero as well.
+                if next.is_null() {
+                    self.tail.store(ptr::null_mut(), Ordering::SeqCst);
+                }
+
                 // The head has been updated. Dequeue the old head.
                 let head = unsafe { NonNull::new_unchecked(head) };
                 if unsafe { head.as_ref().listener.dequeue() } {

@@ -511,6 +511,7 @@ impl EventListener {
             } {
                 // We've been notified, so we're done.
                 self.decrement_length();
+                self.decrement_notified();
                 return true;
             }
 
@@ -606,7 +607,7 @@ impl EventListener {
 
             // If the listener was notified, update the counts.
             if let Some(additional) = orphan {
-                self.inner.notified.fetch_sub(1, Ordering::Release);
+                self.decrement_notified();
                 return Some(additional);
             }
         }
@@ -617,6 +618,11 @@ impl EventListener {
     /// Decrement the length of the queue.
     fn decrement_length(&self) {
         self.inner.len.fetch_sub(1, Ordering::Release);
+    }
+
+    /// Decrement the number of notified listeners.
+    fn decrement_notified(&self) {
+        self.inner.notified.fetch_sub(1, Ordering::Release);
     }
 }
 
