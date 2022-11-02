@@ -60,6 +60,7 @@
 //! }
 //! ```
 
+#![allow(unused_unsafe)]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 #![no_std]
 
