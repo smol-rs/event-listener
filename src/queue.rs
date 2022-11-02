@@ -70,7 +70,7 @@ impl ListenerQueue {
     /// Returns a node pointer.
     pub(crate) fn push(&self, listener: Listener) -> NonNull<Node> {
         // Allocate a new node.
-        let node = self.alloc(listener);
+        let node = self.cache.alloc(listener);
 
         loop {
             // Get the pointer to the node.
@@ -144,7 +144,7 @@ impl ListenerQueue {
                 let head = unsafe { NonNull::new_unchecked(head) };
                 if unsafe { head.as_ref().listener.dequeue() } {
                     // The EventListener for this node has been dropped, free the node.
-                    unsafe { self.dealloc(head) };
+                    unsafe { self.cache.dealloc(head) };
                 } else {
                     // The event is still in use, return the node.
                     return Some(head);
@@ -162,18 +162,20 @@ impl ListenerQueue {
 
         // If we need to deallocate the node, do so.
         if needs_drop {
-            unsafe { self.dealloc(node) };
+            unsafe { self.cache.dealloc(node) };
         }
 
         notified
     }
+}
 
+impl CachedNode {
     /// Allocate a new node for a listener.
     fn alloc(&self, listener: Listener) -> NonNull<Node> {
         // Try to install a cached node.
-        if !self.cache.occupied.swap(true, Ordering::Acquire) {
+        if !self.occupied.swap(true, Ordering::Acquire) {
             // We can now initialize the node.
-            let node_ptr = self.cache.node.get() as *mut Node;
+            let node_ptr = self.node.get() as *mut Node;
 
             unsafe {
                 // Initialize the node.
@@ -192,10 +194,10 @@ impl ListenerQueue {
     /// Deallocate a node.
     unsafe fn dealloc(&self, node: NonNull<Node>) {
         // Is this node the current cache node?
-        if ptr::eq(self.cache.node.get() as *const Node, node.as_ptr()) {
+        if ptr::eq(self.node.get() as *const Node, node.as_ptr()) {
             // We can now clear the cache.
-            unsafe { (self.cache.node.get() as *mut Node).drop_in_place() };
-            self.cache.occupied.store(false, Ordering::Release);
+            unsafe { (self.node.get() as *mut Node).drop_in_place() };
+            self.occupied.store(false, Ordering::Release);
         } else {
             // We need to deallocate the node on the heap.
             unsafe { Box::from_raw(node.as_ptr()) };
