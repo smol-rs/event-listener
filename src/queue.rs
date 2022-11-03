@@ -175,7 +175,7 @@ impl CachedNode {
         // Try to install a cached node.
         if !self.occupied.swap(true, Ordering::Acquire) {
             // We can now initialize the node.
-            let node_ptr = self.node.get() as *mut Node;
+            let node_ptr = unsafe { (*self.node.get()).as_mut_ptr() };
 
             unsafe {
                 // Initialize the node.
