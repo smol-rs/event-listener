@@ -28,6 +28,7 @@ fn notify() {
 
     event.notify(2);
     event.notify(1);
+
     assert!(is_notified(&mut l1));
     assert!(is_notified(&mut l2));
     assert!(!is_notified(&mut l3));
