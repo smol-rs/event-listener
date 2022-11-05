@@ -34,7 +34,7 @@ impl Inner {
     /// Create a new `Inner`.
     pub(crate) fn new() -> Self {
         Self {
-            notified: AtomicUsize::new(usize::MAX),
+            notified: AtomicUsize::new(core::usize::MAX),
             list: Mutex::new(List::new()),
             queue: Queue::new(),
             cache: UnsafeCell::new(Entry::new()),
@@ -96,13 +96,13 @@ impl ops::Deref for ListGuard<'_> {
     type Target = List;
 
     fn deref(&self) -> &Self::Target {
-        self.guard.as_deref().unwrap()
+        self.guard.as_ref().unwrap()
     }
 }
 
 impl ops::DerefMut for ListGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.guard.as_deref_mut().unwrap()
+        self.guard.as_mut().unwrap()
     }
 }
 
@@ -123,7 +123,7 @@ impl Drop for ListGuard<'_> {
         let notified = if list.notified < list.len {
             list.notified
         } else {
-            usize::MAX
+            core::usize::MAX
         };
 
         self.inner.notified.store(notified, Ordering::Release);
