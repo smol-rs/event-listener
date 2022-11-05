@@ -79,13 +79,14 @@ use alloc::sync::Arc;
 use core::fmt;
 use core::future::Future;
 use core::mem::ManuallyDrop;
-use core::panic::{RefUnwindSafe, UnwindSafe};
 use core::pin::Pin;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
 use core::task::{Context, Poll, Waker};
 use core::usize;
 
+#[cfg(feature = "std")]
+use std::panic::{RefUnwindSafe, UnwindSafe};
 #[cfg(feature = "std")]
 use std::time::{Duration, Instant};
 
@@ -215,6 +216,12 @@ impl Event {
                 // Push entries into the queue indicating that we want to push a listener.
                 let (node, entry) = Node::listener();
                 (*inner).push(node);
+
+                // Indicate that there are nodes waiting to be notified.
+                (*inner)
+                    .notified
+                    .compare_exchange(usize::MAX, 0, Ordering::AcqRel, Ordering::Relaxed)
+                    .ok();
 
                 entry
             }
@@ -524,9 +531,12 @@ pub struct EventListener {
 unsafe impl Send for EventListener {}
 unsafe impl Sync for EventListener {}
 
+#[cfg(feature = "std")]
 impl UnwindSafe for EventListener {}
+#[cfg(feature = "std")]
 impl RefUnwindSafe for EventListener {}
 
+#[cfg(feature = "std")]
 impl EventListener {
     /// Blocks until a notification is received.
     ///
@@ -588,6 +598,88 @@ impl EventListener {
         self.wait_internal(Some(deadline))
     }
 
+    fn wait_internal(mut self, deadline: Option<Instant>) -> bool {
+        // Take out the entry pointer and set it to `None`.
+        let entry = match self.entry.take() {
+            None => unreachable!("cannot wait twice on an `EventListener`"),
+            Some(entry) => entry,
+        };
+        let (parker, unparker) = parking::pair();
+
+        // Wait for the lock to be available.
+        let lock = || {
+            loop {
+                match self.inner.lock() {
+                    Some(lock) => return lock,
+                    None => {
+                        // Wake us up when the lock is free.
+                        let unparker = parker.unparker();
+                        self.inner.push(Node::waiting(Task::Thread(unparker)));
+                        parker.park()
+                    }
+                }
+            }
+        };
+
+        // Set this listener's state to `Waiting`.
+        {
+            let e = unsafe { entry.as_ref() };
+
+            if e.is_queued() {
+                // Write a task to be woken once the lock is acquired.
+                e.write_task(Task::Thread(unparker));
+            } else {
+                let mut list = lock();
+
+                // If the listener was notified, we're done.
+                match e.state().replace(State::Notified(false)) {
+                    State::Notified(_) => {
+                        list.remove(entry, self.inner.cache_ptr());
+                        return true;
+                    }
+                    _ => e.state().set(State::Task(Task::Thread(unparker))),
+                }
+            }
+        }
+
+        // Wait until a notification is received or the timeout is reached.
+        loop {
+            match deadline {
+                None => parker.park(),
+
+                Some(deadline) => {
+                    // Check for timeout.
+                    let now = Instant::now();
+                    if now >= deadline {
+                        // Remove the entry and check if notified.
+                        let mut list = lock();
+                        let state = list.remove(entry, self.inner.cache_ptr());
+                        return state.is_notified();
+                    }
+
+                    // Park until the deadline.
+                    parker.park_timeout(deadline - now);
+                }
+            }
+
+            let mut list = lock();
+            let e = unsafe { entry.as_ref() };
+
+            // Do a dummy replace operation in order to take out the state.
+            match e.state().replace(State::Notified(false)) {
+                State::Notified(_) => {
+                    // If this listener has been notified, remove it from the list and return.
+                    list.remove(entry, self.inner.cache_ptr());
+                    return true;
+                }
+                // Otherwise, set the state back to `Waiting`.
+                state => e.state().set(state),
+            }
+        }
+    }
+}
+
+impl EventListener {
     /// Drops this listener and discards its notification (if any) without notifying another
     /// active listener.
     ///
@@ -611,10 +703,7 @@ impl EventListener {
         if let Some(entry) = self.entry.take() {
             // Remove the listener from the list and return `true` if it was notified.
             if let Some(mut lock) = self.inner.lock() {
-                let state = lock.remove(entry);
-                unsafe {
-                    lock.dealloc(entry, self.inner.cache_ptr());
-                }
+                let state = lock.remove(entry, self.inner.cache_ptr());
 
                 if let State::Notified(_) = state {
                     return true;
@@ -661,95 +750,6 @@ impl EventListener {
     pub fn same_event(&self, other: &EventListener) -> bool {
         ptr::eq::<Inner>(&*self.inner, &*other.inner)
     }
-
-    fn wait_internal(mut self, deadline: Option<Instant>) -> bool {
-        // Take out the entry pointer and set it to `None`.
-        let entry = match self.entry.take() {
-            None => unreachable!("cannot wait twice on an `EventListener`"),
-            Some(entry) => entry,
-        };
-        let (parker, unparker) = parking::pair();
-
-        // Wait for the lock to be available.
-        let lock = || {
-            loop {
-                match self.inner.lock() {
-                    Some(lock) => return lock,
-                    None => {
-                        // Wake us up when the lock is free.
-                        let unparker = parker.unparker();
-                        self.inner.push(Node::waiting(Task::Thread(unparker)));
-                        parker.park()
-                    }
-                }
-            }
-        };
-
-        // Set this listener's state to `Waiting`.
-        {
-            let e = unsafe { entry.as_ref() };
-
-            if e.is_queued() {
-                // Write a task to be woken once the lock is acquired.
-                e.write_task(Task::Thread(unparker));
-            } else {
-                let mut list = lock();
-
-                // If the listener was notified, we're done.
-                match e.state().replace(State::Notified(false)) {
-                    State::Notified(_) => {
-                        list.remove(entry);
-                        unsafe {
-                            list.dealloc(entry, self.inner.cache_ptr());
-                        }
-                        return true;
-                    }
-                    _ => e.state().set(State::Task(Task::Thread(unparker))),
-                }
-            }
-        }
-
-        // Wait until a notification is received or the timeout is reached.
-        loop {
-            match deadline {
-                None => parker.park(),
-
-                Some(deadline) => {
-                    // Check for timeout.
-                    let now = Instant::now();
-                    if now >= deadline {
-                        // Remove the entry and check if notified.
-                        let mut list = lock();
-                        let state = list.remove(entry);
-                        unsafe {
-                            list.dealloc(entry, self.inner.cache_ptr());
-                        }
-                        return state.is_notified();
-                    }
-
-                    // Park until the deadline.
-                    parker.park_timeout(deadline - now);
-                }
-            }
-
-            let mut list = lock();
-            let e = unsafe { entry.as_ref() };
-
-            // Do a dummy replace operation in order to take out the state.
-            match e.state().replace(State::Notified(false)) {
-                State::Notified(_) => {
-                    // If this listener has been notified, remove it from the list and return.
-                    list.remove(entry);
-                    unsafe {
-                        list.dealloc(entry, self.inner.cache_ptr());
-                    }
-                    return true;
-                }
-                // Otherwise, set the state back to `Waiting`.
-                state => e.state().set(state),
-            }
-        }
-    }
 }
 
 impl fmt::Debug for EventListener {
@@ -788,10 +788,7 @@ impl Future for EventListener {
         match state.replace(State::Notified(false)) {
             State::Notified(_) => {
                 // If this listener has been notified, remove it from the list and return.
-                list.remove(entry);
-                unsafe {
-                    list.dealloc(entry, self.inner.cache_ptr());
-                };
+                list.remove(entry, self.inner.cache_ptr());
                 drop(list);
                 self.entry = None;
                 return Poll::Ready(());
@@ -824,17 +821,14 @@ impl Drop for EventListener {
             match self.inner.lock() {
                 Some(mut list) => {
                     // But if a notification was delivered to it...
-                    if let State::Notified(additional) = list.remove(entry) {
+                    if let State::Notified(additional) = list.remove(entry, self.inner.cache_ptr())
+                    {
                         // Then pass it on to another active listener.
                         if additional {
                             list.notify_additional(1);
                         } else {
                             list.notify(1);
                         }
-                    }
-
-                    unsafe {
-                        list.dealloc(entry, self.inner.cache_ptr());
                     }
                 }
                 None => {
@@ -883,4 +877,32 @@ fn yield_now() {
     #[cfg(not(feature = "std"))]
     #[allow(deprecated)]
     sync::atomic::spin_loop_hint();
+}
+
+impl Event {
+    /// Locks the event.
+    ///
+    /// This is useful for simulating contention, but otherwise serves no other purpose for users.
+    /// It is used only in testing.
+    ///
+    /// This method and `EventLock` are not part of the public API.
+    #[doc(hidden)]
+    pub fn __lock_event(&self) -> EventLock<'_> {
+        unsafe {
+            EventLock {
+                _lock: (*self.inner()).lock().unwrap(),
+            }
+        }
+    }
+}
+
+#[doc(hidden)]
+pub struct EventLock<'a> {
+    _lock: inner::ListGuard<'a>,
+}
+
+impl fmt::Debug for EventLock<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.pad("EventLock { .. }")
+    }
 }

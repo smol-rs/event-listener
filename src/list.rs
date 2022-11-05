@@ -112,7 +112,10 @@ impl List {
             // Replace the tail with the new entry.
             match mem::replace(&mut self.tail, Some(entry)) {
                 None => self.head = Some(entry),
-                Some(t) => t.as_ref().next.set(Some(entry)),
+                Some(t) => {
+                    t.as_ref().next.set(Some(entry));
+                    entry.as_ref().prev.set(Some(t));
+                }
             }
 
             // If there were no unnotified entries, this one is the first now.
@@ -126,7 +129,7 @@ impl List {
     }
 
     /// De-allocate an entry.
-    pub(crate) unsafe fn dealloc(&mut self, entry: NonNull<Entry>, cache: NonNull<Entry>) -> State {
+    unsafe fn dealloc(&mut self, entry: NonNull<Entry>, cache: NonNull<Entry>) -> State {
         if ptr::eq(entry.as_ptr(), cache.as_ptr()) {
             // Free the cached entry.
             self.cache_used = false;
@@ -138,7 +141,7 @@ impl List {
     }
 
     /// Removes an entry from the list and returns its state.
-    pub(crate) fn remove(&mut self, entry: NonNull<Entry>) -> State {
+    pub(crate) fn remove(&mut self, entry: NonNull<Entry>, cache: NonNull<Entry>) -> State {
         unsafe {
             let prev = entry.as_ref().prev.get();
             let next = entry.as_ref().next.get();
@@ -162,6 +165,9 @@ impl List {
 
             // Extract the state.
             let state = entry.as_ref().state.replace(State::Created);
+
+            // Delete the entry.
+            self.dealloc(entry, cache);
 
             // Update the counters.
             if state.is_notified() {

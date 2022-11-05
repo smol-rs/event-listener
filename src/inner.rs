@@ -76,16 +76,18 @@ pub(crate) struct ListGuard<'a> {
 
 impl ListGuard<'_> {
     #[cold]
-    fn process_nodes_slow(&mut self, start_node: Node, tasks: &mut Vec<Task>) {
-        let Self { inner, guard } = self;
-        let list = guard.as_deref_mut().unwrap();
-
+    fn process_nodes_slow(
+        &mut self,
+        start_node: Node,
+        tasks: &mut Vec<Task>,
+        guard: &mut MutexGuard<'_, List>,
+    ) {
         // Process the start node.
-        tasks.extend(start_node.apply(list, inner));
+        tasks.extend(start_node.apply(guard, self.inner));
 
         // Process all remaining nodes.
-        while let Some(node) = inner.queue.pop() {
-            tasks.extend(node.apply(list, inner));
+        while let Some(node) = self.inner.queue.pop() {
+            tasks.extend(node.apply(guard, self.inner));
         }
     }
 }
@@ -107,14 +109,14 @@ impl ops::DerefMut for ListGuard<'_> {
 impl Drop for ListGuard<'_> {
     fn drop(&mut self) {
         let Self { inner, guard } = self;
-        let list = guard.take().unwrap();
+        let mut list = guard.take().unwrap();
 
         // Tasks to wakeup after releasing the lock.
         let mut tasks = vec![];
 
         // Process every node left in the queue.
         if let Some(start_node) = inner.queue.pop() {
-            self.process_nodes_slow(start_node, &mut tasks);
+            self.process_nodes_slow(start_node, &mut tasks, &mut list);
         }
 
         // Update the atomic `notified` counter.
@@ -127,7 +129,7 @@ impl Drop for ListGuard<'_> {
         self.inner.notified.store(notified, Ordering::Release);
 
         // Drop the actual lock.
-        self.guard = None;
+        drop(list);
 
         // Wakeup all tasks.
         for task in tasks {

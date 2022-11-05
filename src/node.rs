@@ -14,7 +14,16 @@ pub(crate) struct Node {
     next: AtomicPtr<Node>,
 
     /// The data associated with the node.
-    data: NodeData,
+    data: Option<NodeData>,
+}
+
+impl From<NodeData> for Node {
+    fn from(data: NodeData) -> Self {
+        Self {
+            next: AtomicPtr::new(ptr::null_mut()),
+            data: Some(data),
+        }
+    }
 }
 
 enum NodeData {
@@ -46,13 +55,7 @@ impl Node {
         // Allocate an entry on the heap.
         let entry = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(Entry::new()))) };
 
-        (
-            Self {
-                next: AtomicPtr::new(ptr::null_mut()),
-                data: NodeData::AddListener { listener: entry },
-            },
-            entry,
-        )
+        (NodeData::AddListener { listener: entry }.into(), entry)
     }
 
     pub(crate) fn next(&self) -> &AtomicPtr<Node> {
@@ -61,34 +64,26 @@ impl Node {
 
     /// Create a new notification entry.
     pub(crate) fn notify(notify: Notify) -> Self {
-        Self {
-            next: AtomicPtr::new(ptr::null_mut()),
-            data: NodeData::Notify(notify),
-        }
+        NodeData::Notify(notify).into()
     }
 
     /// Create a new listener removal entry.
     pub(crate) fn remove_listener(listener: NonNull<Entry>, propagate: bool) -> Self {
-        Self {
-            next: AtomicPtr::new(ptr::null_mut()),
-            data: NodeData::RemoveListener {
-                listener,
-                propagate,
-            },
+        NodeData::RemoveListener {
+            listener,
+            propagate,
         }
+        .into()
     }
 
     /// Create a new waiting entry.
     pub(crate) fn waiting(task: Task) -> Self {
-        Self {
-            next: AtomicPtr::new(ptr::null_mut()),
-            data: NodeData::Waiting(task),
-        }
+        NodeData::Waiting(task).into()
     }
 
     /// Indicate that this node has been enqueued.
     pub(crate) fn enqueue(&self) {
-        if let NodeData::AddListener { listener } = &self.data {
+        if let Some(NodeData::AddListener { listener }) = &self.data {
             unsafe {
                 listener.as_ref().enqueue();
             }
@@ -96,8 +91,10 @@ impl Node {
     }
 
     /// Apply the node to the list.
-    pub(crate) fn apply(self, list: &mut List, inner: &Inner) -> Option<Task> {
-        match self.data {
+    pub(crate) fn apply(mut self, list: &mut List, inner: &Inner) -> Option<Task> {
+        let data = self.data.take().unwrap();
+
+        match data {
             NodeData::AddListener { listener } => {
                 // Add the listener to the list.
                 list.insert(listener);
@@ -119,7 +116,7 @@ impl Node {
                 propagate,
             } => {
                 // Remove the listener from the list.
-                let state = list.remove(listener);
+                let state = list.remove(listener, inner.cache_ptr());
 
                 if let (true, State::Notified(additional)) = (propagate, state) {
                     // Propagate the notification to the next listener.
@@ -128,16 +125,23 @@ impl Node {
                     } else {
                         list.notify(1);
                     }
-                } else if !propagate {
-                    // Just delete the listener.
-                    unsafe {
-                        list.dealloc(listener, inner.cache_ptr());
-                    }
                 }
             }
-            NodeData::Waiting(task) => return Some(task),
+            NodeData::Waiting(task) => {
+                return Some(task);
+            }
         }
 
         None
+    }
+}
+
+impl Drop for Node {
+    fn drop(&mut self) {
+        if let Some(NodeData::AddListener { listener }) = self.data.take() {
+            unsafe {
+                drop(Box::from_raw(listener.as_ptr()));
+            }
+        }
     }
 }
