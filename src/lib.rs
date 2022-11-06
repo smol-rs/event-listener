@@ -93,6 +93,8 @@ use std::time::{Duration, Instant};
 use inner::Inner;
 use list::{Entry, State};
 use node::Node;
+
+#[cfg(feature = "std")]
 use parking::Unparker;
 
 /// An asynchronous waker or thread unparker that can be used to notify a task or thread.
@@ -169,7 +171,9 @@ pub struct Event {
 unsafe impl Send for Event {}
 unsafe impl Sync for Event {}
 
+#[cfg(feature = "std")]
 impl UnwindSafe for Event {}
+#[cfg(feature = "std")]
 impl RefUnwindSafe for Event {}
 
 impl Event {
@@ -227,6 +231,7 @@ impl Event {
             }
         };
 
+        // Register the listener.
         let listener = EventListener {
             inner: unsafe { Arc::clone(&ManuallyDrop::new(Arc::from_raw(inner))) },
             entry: Some(entry),
@@ -683,7 +688,8 @@ impl EventListener {
     /// Drops this listener and discards its notification (if any) without notifying another
     /// active listener.
     ///
-    /// Returns `true` if a notification was discarded.
+    /// Returns `true` if a notification was discarded. Note that this function may spuriously
+    /// return `false` even if a notification was received by the listener.
     ///
     /// # Examples
     /// ```
@@ -761,6 +767,7 @@ impl fmt::Debug for EventListener {
 impl Future for EventListener {
     type Output = ();
 
+    #[allow(unreachable_patterns)]
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut list = match self.inner.lock() {
             Some(list) => list,
@@ -833,7 +840,7 @@ impl Drop for EventListener {
                 }
                 None => {
                     // Request that someone else do it.
-                    self.inner.push(Node::remove_listener(entry, false));
+                    self.inner.push(Node::remove_listener(entry, true));
                 }
             }
         }

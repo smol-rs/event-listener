@@ -253,12 +253,14 @@ impl Entry {
     }
 
     /// Tell whether this entry is currently queued.
+    #[cfg(feature = "std")]
     pub(crate) fn is_queued(&self) -> bool {
         self.shared_state.state.load(Ordering::Acquire) & QUEUED != 0
     }
 
     /// Write to the temporary task.
     #[cold]
+    #[cfg(feature = "std")]
     pub(crate) fn write_task(&self, task: Task) {
         // Acquire the WRITING_STATE lock.
         let mut state = self

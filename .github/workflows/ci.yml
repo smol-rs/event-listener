@@ -29,6 +29,11 @@ jobs:
         if: startsWith(matrix.rust, 'nightly')
         run: cargo check -Z features=dev_dep
       - run: cargo test
+      - run: cargo build --no-default-features
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+      - run: rustup target add thumbv7m-none-eabi
+      - run: cargo hack build --target thumbv7m-none-eabi --no-default-features --no-dev-dep
 
   msrv:
     runs-on: ubuntu-latest

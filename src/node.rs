@@ -56,11 +56,7 @@ impl Node {
         let entry = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(Entry::new()))) };
 
         (NodeData::AddListener { listener: entry }.into(), entry)
-    }
-
-    pub(crate) fn next(&self) -> &AtomicPtr<Node> {
-        &self.next
-    }
+    } 
 
     /// Create a new notification entry.
     pub(crate) fn notify(notify: Notify) -> Self {
@@ -79,6 +75,10 @@ impl Node {
     /// Create a new waiting entry.
     pub(crate) fn waiting(task: Task) -> Self {
         NodeData::Waiting(task).into()
+    }
+
+    pub(crate) fn next(&self) -> &AtomicPtr<Node> {
+        &self.next
     }
 
     /// Indicate that this node has been enqueued.
