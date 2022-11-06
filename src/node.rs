@@ -56,7 +56,7 @@ impl Node {
         let entry = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(Entry::new()))) };
 
         (NodeData::AddListener { listener: entry }.into(), entry)
-    } 
+    }
 
     /// Create a new notification entry.
     pub(crate) fn notify(notify: Notify) -> Self {
