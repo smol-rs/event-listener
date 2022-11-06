@@ -27,6 +27,11 @@ pub(crate) struct Inner {
     queue: Queue,
 
     /// A single cached list entry to avoid allocations on the fast path of the insertion.
+    ///
+    /// This field can only be written to when the `cache_used` field in the `list` structure
+    /// is false, or the user has a pointer to the `Entry` identical to this one and that user
+    /// has exclusive access to that `Entry`. An immutable pointer to this field is kept in
+    /// the `list` structure when it is in use.
     cache: UnsafeCell<Entry>,
 }
 
@@ -175,7 +180,7 @@ impl<T> Mutex<T> {
     fn try_lock_slow(&self) -> Option<MutexGuard<'_, T>> {
         // Assume that the contention is short-term.
         // Spin for a while to see if the mutex becomes unlocked.
-        let mut spins = 100;
+        let mut spins = 100u32;
 
         loop {
             if self
@@ -189,11 +194,12 @@ impl<T> Mutex<T> {
 
             // Use atomic loads instead of compare-exchange.
             while self.locked.load(Ordering::Relaxed) {
-                if spins <= 0 {
-                    return None;
+                match spins.checked_sub(1) {
+                    Some(s) => {
+                        spins = s;
+                    }
+                    None => return None,
                 }
-
-                spins -= 1;
             }
         }
     }

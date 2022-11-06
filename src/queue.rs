@@ -38,7 +38,7 @@ impl Queue {
         let next_ptr = if tail.is_null() {
             &self.head
         } else {
-            unsafe { (*tail).next() }
+            unsafe { &(*tail).next }
         };
 
         loop {
@@ -73,7 +73,7 @@ impl Queue {
                 return None;
             }
 
-            let next = unsafe { (*head).next().load(Ordering::Relaxed) };
+            let next = unsafe { (*head).next.load(Ordering::Relaxed) };
 
             match self
                 .head

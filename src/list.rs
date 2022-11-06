@@ -179,9 +179,19 @@ impl List {
         }
     }
 
+    /// Notifies a number of entries, either normally or as an additional notification.
+    #[cold]
+    pub(crate) fn notify(&mut self, count: usize, additional: bool) {
+        if additional {
+            self.notify_additional(count);
+        } else {
+            self.notify_unnotified(count);
+        }
+    }
+
     /// Notifies a number of entries.
     #[cold]
-    pub(crate) fn notify(&mut self, mut n: usize) {
+    pub(crate) fn notify_unnotified(&mut self, mut n: usize) {
         if n <= self.notified {
             return;
         }

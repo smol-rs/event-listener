@@ -281,7 +281,7 @@ impl Event {
             // listeners is less than `n`.
             if inner.notified.load(Ordering::Acquire) < n {
                 if let Some(mut lock) = inner.lock() {
-                    lock.notify(n);
+                    lock.notify_unnotified(n);
                 } else {
                     inner.push(Node::notify(Notify {
                         count: n,
@@ -332,7 +332,7 @@ impl Event {
             // listeners is less than `n`.
             if inner.notified.load(Ordering::Acquire) < n {
                 if let Some(mut lock) = inner.lock() {
-                    lock.notify(n);
+                    lock.notify_unnotified(n);
                 } else {
                     inner.push(Node::notify(Notify {
                         count: n,
@@ -831,11 +831,7 @@ impl Drop for EventListener {
                     if let State::Notified(additional) = list.remove(entry, self.inner.cache_ptr())
                     {
                         // Then pass it on to another active listener.
-                        if additional {
-                            list.notify_additional(1);
-                        } else {
-                            list.notify(1);
-                        }
+                        list.notify(1, additional);
                     }
                 }
                 None => {
@@ -886,6 +882,7 @@ fn yield_now() {
     sync::atomic::spin_loop_hint();
 }
 
+#[cfg(any(feature = "__test", test))]
 impl Event {
     /// Locks the event.
     ///
@@ -903,11 +900,13 @@ impl Event {
     }
 }
 
+#[cfg(any(feature = "__test", test))]
 #[doc(hidden)]
 pub struct EventLock<'a> {
     _lock: inner::ListGuard<'a>,
 }
 
+#[cfg(any(feature = "__test", test))]
 impl fmt::Debug for EventLock<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.pad("EventLock { .. }")

@@ -11,7 +11,7 @@ use core::ptr::{self, NonNull};
 /// A node in the backup queue.
 pub(crate) struct Node {
     /// The next node in the queue.
-    next: AtomicPtr<Node>,
+    pub(crate) next: AtomicPtr<Node>,
 
     /// The data associated with the node.
     data: Option<NodeData>,
@@ -77,10 +77,6 @@ impl Node {
         NodeData::Waiting(task).into()
     }
 
-    pub(crate) fn next(&self) -> &AtomicPtr<Node> {
-        &self.next
-    }
-
     /// Indicate that this node has been enqueued.
     pub(crate) fn enqueue(&self) {
         if let Some(NodeData::AddListener { listener }) = &self.data {
@@ -107,7 +103,7 @@ impl Node {
                 let Notify { count, kind } = notify;
 
                 match kind {
-                    NotifyKind::Notify => list.notify(count),
+                    NotifyKind::Notify => list.notify_unnotified(count),
                     NotifyKind::NotifyAdditional => list.notify_additional(count),
                 }
             }
@@ -120,11 +116,7 @@ impl Node {
 
                 if let (true, State::Notified(additional)) = (propagate, state) {
                     // Propagate the notification to the next listener.
-                    if additional {
-                        list.notify_additional(1);
-                    } else {
-                        list.notify(1);
-                    }
+                    list.notify(1, additional);
                 }
             }
             NodeData::Waiting(task) => {
