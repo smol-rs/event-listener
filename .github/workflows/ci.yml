@@ -33,7 +33,7 @@ jobs:
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - run: rustup target add thumbv7m-none-eabi
-      - run: cargo hack build --target thumbv7m-none-eabi --no-default-features --no-dev-dep
+      - run: cargo hack build --target thumbv7m-none-eabi --no-default-features --no-dev-deps
 
   msrv:
     runs-on: ubuntu-latest
