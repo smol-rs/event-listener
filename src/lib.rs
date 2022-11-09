@@ -282,7 +282,7 @@ impl Event {
                 if let Some(mut lock) = inner.lock() {
                     lock.notify_unnotified(n);
                 } else {
-                    inner.push(Node::notify(Notify {
+                    inner.push(Node::Notify(Notify {
                         count: n,
                         kind: NotifyKind::Notify,
                     }));
@@ -333,7 +333,7 @@ impl Event {
                 if let Some(mut lock) = inner.lock() {
                     lock.notify_unnotified(n);
                 } else {
-                    inner.push(Node::notify(Notify {
+                    inner.push(Node::Notify(Notify {
                         count: n,
                         kind: NotifyKind::Notify,
                     }));
@@ -383,7 +383,7 @@ impl Event {
                 if let Some(mut lock) = inner.lock() {
                     lock.notify_additional(n);
                 } else {
-                    inner.push(Node::notify(Notify {
+                    inner.push(Node::Notify(Notify {
                         count: n,
                         kind: NotifyKind::NotifyAdditional,
                     }));
@@ -435,7 +435,7 @@ impl Event {
                 if let Some(mut lock) = inner.lock() {
                     lock.notify_additional(n);
                 } else {
-                    inner.push(Node::notify(Notify {
+                    inner.push(Node::Notify(Notify {
                         count: n,
                         kind: NotifyKind::NotifyAdditional,
                     }));
@@ -618,7 +618,7 @@ impl EventListener {
                     None => {
                         // Wake us up when the lock is free.
                         let unparker = parker.unparker();
-                        self.inner.push(Node::waiting(Task::Thread(unparker)));
+                        self.inner.push(Node::Waiting(Task::Thread(unparker)));
                         parker.park()
                     }
                 }
@@ -715,7 +715,7 @@ impl EventListener {
                 }
             } else {
                 // Let someone else do it for us.
-                self.inner.push(Node::remove_listener(entry, false));
+                self.inner.push(Node::RemoveListener { listener: entry, propagate: false });
             }
         }
 
@@ -773,7 +773,7 @@ impl Future for EventListener {
             None => {
                 // Wait for the lock to be available.
                 self.inner
-                    .push(Node::waiting(Task::Waker(cx.waker().clone())));
+                    .push(Node::Waiting(Task::Waker(cx.waker().clone())));
 
                 // If the lock is suddenly available, we need to poll again.
                 if let Some(list) = self.inner.lock() {
@@ -835,7 +835,7 @@ impl Drop for EventListener {
                 }
                 None => {
                     // Request that someone else do it.
-                    self.inner.push(Node::remove_listener(entry, true));
+                    self.inner.push(Node::RemoveListener { listener: entry, propagate: true });
                 }
             }
         }

@@ -8,22 +8,11 @@ use alloc::boxed::Box;
 use core::ptr::NonNull;
 
 /// A node in the backup queue.
-pub(crate) struct Node {
-    /// The data associated with the node.
-    data: Option<NodeData>,
-}
-
-impl From<NodeData> for Node {
-    fn from(data: NodeData) -> Self {
-        Self { data: Some(data) }
-    }
-}
-
-enum NodeData {
+pub(crate) enum Node {
     /// This node is requesting to add a listener.
     AddListener {
         /// The pointer to the listener to add.
-        listener: NonNull<Entry>,
+        listener: Option<DistOwnedListener>,
     },
 
     /// This node is notifying a listener.
@@ -42,65 +31,55 @@ enum NodeData {
     Waiting(Task),
 }
 
+pub(crate) struct DistOwnedListener(NonNull<Entry>);
+
+impl DistOwnedListener {
+    /// extracts the contained entry pointer from the DOL,
+    /// without calling the DOL Drop handler (such that the returned pointer stays valid)
+    fn take(self) -> NonNull<Entry> {
+        (&*core::mem::ManuallyDrop::new(self)).0
+    }
+}
+
+impl Drop for DistOwnedListener {
+    fn drop(&mut self) {
+        drop(unsafe { Box::from_raw(self.0.as_ptr()) });
+    }
+}
+
 impl Node {
-    /// Create a new listener submission entry.
     pub(crate) fn listener() -> (Self, NonNull<Entry>) {
-        // Allocate an entry on the heap.
-        let entry = unsafe { NonNull::new_unchecked(Box::into_raw(Box::new(Entry::new()))) };
-
-        (NodeData::AddListener { listener: entry }.into(), entry)
-    }
-
-    /// Create a new notification entry.
-    pub(crate) fn notify(notify: Notify) -> Self {
-        NodeData::Notify(notify).into()
-    }
-
-    /// Create a new listener removal entry.
-    pub(crate) fn remove_listener(listener: NonNull<Entry>, propagate: bool) -> Self {
-        NodeData::RemoveListener {
-            listener,
-            propagate,
-        }
-        .into()
-    }
-
-    /// Create a new waiting entry.
-    pub(crate) fn waiting(task: Task) -> Self {
-        NodeData::Waiting(task).into()
+        let entry = Box::into_raw(Box::new(Entry::new()));
+        let entry = unsafe { NonNull::new_unchecked(entry) };
+        (Self::AddListener { listener: Some(DistOwnedListener(entry)) }, entry)
     }
 
     /// Indicate that this node has been enqueued.
     pub(crate) fn enqueue(&self) {
-        if let Some(NodeData::AddListener { listener }) = &self.data {
-            unsafe {
-                listener.as_ref().enqueue();
-            }
+        if let Node::AddListener { listener: Some(entry) } = self {
+            unsafe { entry.0.as_ref() }.enqueue();
         }
     }
 
     /// Apply the node to the list.
-    pub(crate) fn apply(mut self, list: &mut List, inner: &Inner) -> Option<Task> {
-        let data = self.data.take().unwrap();
-
-        match data {
-            NodeData::AddListener { listener } => {
+    pub(crate) fn apply(self, list: &mut List, inner: &Inner) -> Option<Task> {
+        match self {
+            Node::AddListener { mut listener } => {
                 // Add the listener to the list.
-                list.insert(listener);
+                let entry = listener.take().unwrap().take();
+                list.insert(entry);
 
                 // Dequeue the listener.
-                return unsafe { listener.as_ref().dequeue() };
+                return unsafe { entry.as_ref().dequeue() };
             }
-            NodeData::Notify(notify) => {
+            Node::Notify(Notify { count, kind }) => {
                 // Notify the listener.
-                let Notify { count, kind } = notify;
-
                 match kind {
                     NotifyKind::Notify => list.notify_unnotified(count),
                     NotifyKind::NotifyAdditional => list.notify_additional(count),
                 }
             }
-            NodeData::RemoveListener {
+            Node::RemoveListener {
                 listener,
                 propagate,
             } => {
@@ -112,21 +91,11 @@ impl Node {
                     list.notify(1, additional);
                 }
             }
-            NodeData::Waiting(task) => {
+            Node::Waiting(task) => {
                 return Some(task);
             }
         }
 
         None
-    }
-}
-
-impl Drop for Node {
-    fn drop(&mut self) {
-        if let Some(NodeData::AddListener { listener }) = self.data.take() {
-            unsafe {
-                drop(Box::from_raw(listener.as_ptr()));
-            }
-        }
     }
 }
