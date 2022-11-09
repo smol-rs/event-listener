@@ -37,7 +37,7 @@ impl DistOwnedListener {
     /// extracts the contained entry pointer from the DOL,
     /// without calling the DOL Drop handler (such that the returned pointer stays valid)
     fn take(self) -> NonNull<Entry> {
-        (&*core::mem::ManuallyDrop::new(self)).0
+        core::mem::ManuallyDrop::new(self).0
     }
 }
 
@@ -51,12 +51,20 @@ impl Node {
     pub(crate) fn listener() -> (Self, NonNull<Entry>) {
         let entry = Box::into_raw(Box::new(Entry::new()));
         let entry = unsafe { NonNull::new_unchecked(entry) };
-        (Self::AddListener { listener: Some(DistOwnedListener(entry)) }, entry)
+        (
+            Self::AddListener {
+                listener: Some(DistOwnedListener(entry)),
+            },
+            entry,
+        )
     }
 
     /// Indicate that this node has been enqueued.
     pub(crate) fn enqueue(&self) {
-        if let Node::AddListener { listener: Some(entry) } = self {
+        if let Node::AddListener {
+            listener: Some(entry),
+        } = self
+        {
             unsafe { entry.0.as_ref() }.enqueue();
         }
     }

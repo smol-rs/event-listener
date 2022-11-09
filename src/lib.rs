@@ -715,7 +715,10 @@ impl EventListener {
                 }
             } else {
                 // Let someone else do it for us.
-                self.inner.push(Node::RemoveListener { listener: entry, propagate: false });
+                self.inner.push(Node::RemoveListener {
+                    listener: entry,
+                    propagate: false,
+                });
             }
         }
 
@@ -835,7 +838,10 @@ impl Drop for EventListener {
                 }
                 None => {
                     // Request that someone else do it.
-                    self.inner.push(Node::RemoveListener { listener: entry, propagate: true });
+                    self.inner.push(Node::RemoveListener {
+                        listener: entry,
+                        propagate: true,
+                    });
                 }
             }
         }

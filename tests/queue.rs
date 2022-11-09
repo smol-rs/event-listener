@@ -1,7 +1,5 @@
 //! Tests involving the backup queue used under heavy contention.
 
-#![cfg(not(miri))]
-
 use std::future::Future;
 use std::pin::Pin;
 use std::task::Context;
