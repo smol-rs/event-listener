@@ -10,6 +10,8 @@ use core::ptr::NonNull;
 /// A node in the backup queue.
 pub(crate) enum Node {
     /// This node is requesting to add a listener.
+    // For some reason, the MSRV build says this variant is never constructed.
+    #[allow(dead_code)]
     AddListener {
         /// The pointer to the listener to add.
         listener: Option<DistOwnedListener>,

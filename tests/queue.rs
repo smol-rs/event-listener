@@ -21,7 +21,6 @@ fn insert_and_notify() {
     // Lock to simulate contention.
     let lock = event.__lock_event();
 
-    // TODO(notgull): MIRI deadlocks here for some reason, is this a MIRI bug?
     let mut l1 = event.listen();
     let mut l2 = event.listen();
     let mut l3 = event.listen();
@@ -32,6 +31,36 @@ fn insert_and_notify() {
 
     event.notify(2);
     event.notify(1);
+
+    // Unlock to simulate contention being released.
+    drop(lock);
+
+    assert!(is_notified(&mut l1));
+    assert!(is_notified(&mut l2));
+    assert!(!is_notified(&mut l3));
+}
+
+#[test]
+fn insert_then_contention() {
+    let event = Event::new();
+
+    // Allow the listeners to be created without contention.
+    let mut l1 = event.listen();
+    let mut l2 = event.listen();
+    let mut l3 = event.listen();
+
+    assert!(!is_notified(&mut l1));
+    assert!(!is_notified(&mut l2));
+    assert!(!is_notified(&mut l3));
+
+    // Lock to simulate contention.
+    let lock = event.__lock_event();
+
+    assert!(!is_notified(&mut l1));
+    assert!(!is_notified(&mut l2));
+    assert!(!is_notified(&mut l3));
+
+    event.notify(2);
 
     // Unlock to simulate contention being released.
     drop(lock);
