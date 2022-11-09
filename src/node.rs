@@ -2,27 +2,20 @@
 
 use crate::inner::Inner;
 use crate::list::{Entry, List, State};
-use crate::sync::atomic::AtomicPtr;
 use crate::{Notify, NotifyKind, Task};
 
 use alloc::boxed::Box;
-use core::ptr::{self, NonNull};
+use core::ptr::NonNull;
 
 /// A node in the backup queue.
 pub(crate) struct Node {
-    /// The next node in the queue.
-    pub(crate) next: AtomicPtr<Node>,
-
     /// The data associated with the node.
     data: Option<NodeData>,
 }
 
 impl From<NodeData> for Node {
     fn from(data: NodeData) -> Self {
-        Self {
-            next: AtomicPtr::new(ptr::null_mut()),
-            data: Some(data),
-        }
+        Self { data: Some(data) }
     }
 }
 

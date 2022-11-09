@@ -71,7 +71,6 @@ extern crate std;
 mod inner;
 mod list;
 mod node;
-mod queue;
 mod sync;
 
 use alloc::sync::Arc;
