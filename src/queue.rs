@@ -54,7 +54,7 @@ impl Queue {
         };
 
         loop {
-            match next_ptr.compare_exchange_weak(
+            match next_ptr.compare_exchange(
                 ptr::null_mut(),
                 node,
                 Ordering::Release,
@@ -89,7 +89,7 @@ impl Queue {
 
             match self
                 .head
-                .compare_exchange_weak(head, next, Ordering::Release, Ordering::Relaxed)
+                .compare_exchange(head, next, Ordering::Release, Ordering::Relaxed)
             {
                 Ok(_) => {
                     // We have successfully popped the head of the queue.
