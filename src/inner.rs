@@ -2,6 +2,7 @@
 
 use crate::list::{Entry, List};
 use crate::node::Node;
+use crate::queue::Queue;
 use crate::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::sync::cell::UnsafeCell;
 use crate::Task;
@@ -11,8 +12,6 @@ use alloc::vec::Vec;
 
 use core::ops;
 use core::ptr::NonNull;
-
-use concurrent_queue::ConcurrentQueue;
 
 /// Inner state of [`Event`].
 pub(crate) struct Inner {
@@ -25,7 +24,7 @@ pub(crate) struct Inner {
     list: Mutex<List>,
 
     /// Queue of nodes waiting to be processed.
-    queue: ConcurrentQueue<Node>,
+    queue: Queue,
 
     /// A single cached list entry to avoid allocations on the fast path of the insertion.
     ///
@@ -42,7 +41,7 @@ impl Inner {
         Self {
             notified: AtomicUsize::new(core::usize::MAX),
             list: Mutex::new(List::new()),
-            queue: ConcurrentQueue::unbounded(),
+            queue: Queue::new(),
             cache: UnsafeCell::new(Entry::new()),
         }
     }
@@ -58,8 +57,7 @@ impl Inner {
     /// Push a pending operation to the queue.
     #[cold]
     pub(crate) fn push(&self, node: Node) {
-        node.enqueue();
-        self.queue.push(node).ok();
+        self.queue.push(node);
 
         // Acquire and drop the lock to make sure that the queue is flushed.
         let _guard = self.lock();
@@ -93,7 +91,7 @@ impl ListGuard<'_> {
         tasks.extend(start_node.apply(guard, self.inner));
 
         // Process all remaining nodes.
-        while let Ok(node) = self.inner.queue.pop() {
+        while let Some(node) = self.inner.queue.pop() {
             tasks.extend(node.apply(guard, self.inner));
         }
     }
@@ -122,7 +120,7 @@ impl Drop for ListGuard<'_> {
         let mut tasks = vec![];
 
         // Process every node left in the queue.
-        if let Ok(start_node) = inner.queue.pop() {
+        if let Some(start_node) = inner.queue.pop() {
             self.process_nodes_slow(start_node, &mut tasks, &mut list);
         }
 
