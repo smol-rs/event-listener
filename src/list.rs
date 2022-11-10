@@ -108,24 +108,22 @@ impl List {
 
     /// Inserts a new entry into the list.
     pub(crate) fn insert(&mut self, entry: NonNull<Entry>) {
-        unsafe {
-            // Replace the tail with the new entry.
-            match mem::replace(&mut self.tail, Some(entry)) {
-                None => self.head = Some(entry),
-                Some(t) => {
-                    t.as_ref().next.set(Some(entry));
-                    entry.as_ref().prev.set(Some(t));
-                }
-            }
-
-            // If there were no unnotified entries, this one is the first now.
-            if self.start.is_none() {
-                self.start = self.tail;
-            }
-
-            // Bump the entry count.
-            self.len += 1;
+        // Replace the tail with the new entry.
+        match mem::replace(&mut self.tail, Some(entry)) {
+            None => self.head = Some(entry),
+            Some(t) => unsafe {
+                t.as_ref().next.set(Some(entry));
+                entry.as_ref().prev.set(Some(t));
+            },
         }
+
+        // If there were no unnotified entries, this one is the first now.
+        if self.start.is_none() {
+            self.start = self.tail;
+        }
+
+        // Bump the entry count.
+        self.len += 1;
     }
 
     /// De-allocate an entry.
@@ -263,6 +261,9 @@ impl Entry {
     }
 
     /// Tell whether this entry is currently queued.
+    ///
+    /// This is only ever used as an optimization for `wait_internal`, hence that fact that
+    /// it is `std`-exclusive
     #[cfg(feature = "std")]
     pub(crate) fn is_queued(&self) -> bool {
         self.shared_state.state.load(Ordering::Acquire) & QUEUED != 0
@@ -279,11 +280,7 @@ impl Entry {
             .fetch_or(WRITING_STATE, Ordering::AcqRel);
 
         // Wait until the WRITING_STATE lock is released.
-        loop {
-            if state & WRITING_STATE == 0 {
-                break;
-            }
-
+        while state & WRITING_STATE != 0 {
             state = self
                 .shared_state
                 .state
@@ -309,11 +306,7 @@ impl Entry {
             .fetch_or(WRITING_STATE, Ordering::AcqRel);
 
         // Wait until the WRITING_STATE lock is released.
-        loop {
-            if state & WRITING_STATE == 0 {
-                break;
-            }
-
+        while state & WRITING_STATE != 0 {
             state = self
                 .shared_state
                 .state

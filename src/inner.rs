@@ -196,12 +196,8 @@ impl<T> Mutex<T> {
 
             // Use atomic loads instead of compare-exchange.
             while self.locked.load(Ordering::Relaxed) {
-                match spins.checked_sub(1) {
-                    Some(s) => {
-                        spins = s;
-                    }
-                    None => return None,
-                }
+                // Return None once we've exhausted the number of spins.
+                spins = spins.checked_sub(1)?;
             }
         }
     }
