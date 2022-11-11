@@ -26,10 +26,7 @@ impl<T> RacyArc<T> {
 
     /// Initialize the `RacyArc` with the given `T`, and returning an
     /// `Arc` to it.
-    pub(crate) fn get_or_init(
-        &self,
-        init: impl FnOnce() -> T,
-    ) -> *const T {
+    pub(crate) fn get_or_init(&self, init: impl FnOnce() -> T) -> *const T {
         // Load the current value.
         let mut inner = self.ptr.load(Ordering::Acquire);
 
