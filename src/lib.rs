@@ -73,6 +73,7 @@ mod list;
 mod node;
 mod queue;
 mod sync;
+mod util;
 
 use alloc::sync::Arc;
 
@@ -81,7 +82,7 @@ use core::future::Future;
 use core::mem::ManuallyDrop;
 use core::pin::Pin;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
+use core::sync::atomic::{self, AtomicUsize, Ordering};
 use core::task::{Context, Poll, Waker};
 use core::usize;
 
@@ -161,11 +162,7 @@ enum NotifyKind {
 /// Listeners are registered and notified in the first-in first-out fashion, ensuring fairness.
 pub struct Event {
     /// A pointer to heap-allocated inner state.
-    ///
-    /// This pointer is initially null and gets lazily initialized on first use. Semantically, it
-    /// is an `Arc<Inner>` so it's important to keep in mind that it contributes to the [`Arc`]'s
-    /// reference count.
-    inner: AtomicPtr<Inner>,
+    inner: util::RacyArc<Inner>,
 }
 
 unsafe impl Send for Event {}
@@ -189,7 +186,7 @@ impl Event {
     #[inline]
     pub const fn new() -> Event {
         Event {
-            inner: AtomicPtr::new(ptr::null_mut()),
+            inner: util::RacyArc::new(),
         }
     }
 
@@ -448,8 +445,7 @@ impl Event {
     /// Returns a reference to the inner state if it was initialized.
     #[inline]
     fn try_inner(&self) -> Option<&Inner> {
-        let inner = self.inner.load(Ordering::Acquire);
-        unsafe { inner.as_ref() }
+        self.inner.get()
     }
 
     /// Returns a raw pointer to the inner state, initializing it if necessary.
@@ -457,49 +453,7 @@ impl Event {
     /// This returns a raw pointer instead of reference because `from_raw`
     /// requires raw/mut provenance: <https://github.com/rust-lang/rust/pull/67339>
     fn inner(&self) -> *const Inner {
-        let mut inner = self.inner.load(Ordering::Acquire);
-
-        // Initialize the state if this is its first use.
-        if inner.is_null() {
-            // Allocate on the heap.
-            let new = Arc::new(Inner::new());
-            // Convert the heap-allocated state into a raw pointer.
-            let new = Arc::into_raw(new) as *mut Inner;
-
-            // Attempt to replace the null-pointer with the new state pointer.
-            inner = self
-                .inner
-                .compare_exchange(inner, new, Ordering::AcqRel, Ordering::Acquire)
-                .unwrap_or_else(|x| x);
-
-            // Check if the old pointer value was indeed null.
-            if inner.is_null() {
-                // If yes, then use the new state pointer.
-                inner = new;
-            } else {
-                // If not, that means a concurrent operation has initialized the state.
-                // In that case, use the old pointer and deallocate the new one.
-                unsafe {
-                    drop(Arc::from_raw(new));
-                }
-            }
-        }
-
-        inner
-    }
-}
-
-impl Drop for Event {
-    #[inline]
-    fn drop(&mut self) {
-        let inner: *mut Inner = *self.inner.get_mut();
-
-        // If the state pointer has been initialized, deallocate it.
-        if !inner.is_null() {
-            unsafe {
-                drop(Arc::from_raw(inner));
-            }
-        }
+        self.inner.with_or_init(Inner::new, |a| Arc::as_ptr(a))
     }
 }
 
@@ -740,7 +694,7 @@ impl EventListener {
     /// ```
     #[inline]
     pub fn listens_to(&self, event: &Event) -> bool {
-        ptr::eq::<Inner>(&*self.inner, event.inner.load(Ordering::Acquire))
+        ptr::eq::<Inner>(&*self.inner, event.inner())
     }
 
     /// Returns `true` if both listeners listen to the same `Event`.
