@@ -169,9 +169,6 @@ pub struct Event {
     inner: AtomicPtr<Inner>,
 }
 
-unsafe impl Send for Event {}
-unsafe impl Sync for Event {}
-
 #[cfg(feature = "std")]
 impl UnwindSafe for Event {}
 #[cfg(feature = "std")]
@@ -532,9 +529,6 @@ pub struct EventListener {
     /// The current state of the listener.
     state: ListenerState,
 }
-
-unsafe impl Send for EventListener {}
-unsafe impl Sync for EventListener {}
 
 enum ListenerState {
     /// The listener has a node inside of the linked list.

@@ -208,3 +208,6 @@ impl<'a, T> ops::DerefMut for MutexGuard<'a, T> {
         unsafe { &mut *self.mutex.value.get() }
     }
 }
+
+unsafe impl<T: Send> Send for Mutex<T> {}
+unsafe impl<T: Send> Sync for Mutex<T> {}
