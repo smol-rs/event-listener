@@ -81,7 +81,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Install Rust
         run: rustup toolchain install nightly --component clippy && rustup default nightly
-      - run: cargo run --features loom --test loom
+      - run: cargo test --features loom --test loom
         env:
           RUSTFLAGS: ${{ env.RUSTFLAGS }} --cfg loom
 
