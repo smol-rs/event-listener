@@ -74,6 +74,16 @@ jobs:
         env:
           MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation
           RUSTFLAGS: ${{ env.RUSTFLAGS }} -Z randomize-layout
+  
+  loom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install Rust
+        run: rustup toolchain install nightly --component clippy && rustup default nightly
+      - run: cargo run --features loom --test loom
+        env:
+          RUSTFLAGS: ${{ env.RUSTFLAGS }} --cfg loom
 
   security_audit:
     runs-on: ubuntu-latest
