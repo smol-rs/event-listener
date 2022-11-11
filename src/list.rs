@@ -134,7 +134,16 @@ impl List {
             entry.as_ref().state.replace(State::Created)
         } else {
             // Deallocate the entry.
-            Box::from_raw(entry.as_ptr()).state.into_inner()
+            #[cfg(not(all(feature = "loom", loom)))]
+            {
+                Box::from_raw(entry.as_ptr()).state.into_inner()
+            }
+
+            // Loom doesn't support Cell::into_inner() for some reason.
+            #[cfg(all(feature = "loom", loom))]
+            {
+                Box::from_raw(entry.as_ptr()).state.replace(State::Created)
+            }
         }
     }
 

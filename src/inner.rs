@@ -4,12 +4,12 @@ use crate::list::{Entry, List};
 use crate::node::Node;
 use crate::queue::Queue;
 use crate::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use crate::sync::cell::UnsafeCell;
 use crate::Task;
 
 use alloc::vec;
 use alloc::vec::Vec;
 
+use core::cell::UnsafeCell;
 use core::ops;
 use core::ptr::NonNull;
 

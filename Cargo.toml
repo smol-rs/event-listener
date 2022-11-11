@@ -21,9 +21,14 @@ std = ["parking"]
 # Unstable, test only feature. Do not enable this.
 __test = []
 
+# Loom support is considered unstable as well.
+[target.'cfg(loom)'.dependencies]
+loom = { version = "0.5", optional = true }
+parking = { git = "https://github.com/smol-rs/parking.git", features = ["loom"] }
+
 [dependencies]
 crossbeam-utils = { version = "0.8.12", default-features = false }
-parking = { version = "2.0.0", optional = true }
+parking = { git = "https://github.com/smol-rs/parking.git", optional = true }
 
 [dev-dependencies]
 criterion = "0.3.4"

@@ -88,7 +88,10 @@ use core::usize;
 #[cfg(feature = "std")]
 use std::panic::{RefUnwindSafe, UnwindSafe};
 #[cfg(feature = "std")]
-use std::time::{Duration, Instant};
+use std::time::Instant;
+
+#[cfg(all(feature = "std", not(all(feature = "loom", loom))))]
+use std::time::Duration;
 
 use inner::Inner;
 use list::{Entry, State};
@@ -579,6 +582,7 @@ impl EventListener {
     /// // There are no notification so this times out.
     /// assert!(!listener.wait_timeout(Duration::from_secs(1)));
     /// ```
+    #[cfg(not(all(feature = "loom", loom)))]
     pub fn wait_timeout(self, timeout: Duration) -> bool {
         self.wait_internal(Some(Instant::now() + timeout))
     }
@@ -599,6 +603,7 @@ impl EventListener {
     /// // There are no notification so this times out.
     /// assert!(!listener.wait_deadline(Instant::now() + Duration::from_secs(1)));
     /// ```
+    #[cfg(not(all(feature = "loom", loom)))]
     pub fn wait_deadline(self, deadline: Instant) -> bool {
         self.wait_internal(Some(deadline))
     }
@@ -653,17 +658,26 @@ impl EventListener {
                 None => parker.park(),
 
                 Some(deadline) => {
-                    // Check for timeout.
-                    let now = Instant::now();
-                    if now >= deadline {
-                        // Remove the entry and check if notified.
-                        let mut list = lock();
-                        let state = list.remove(entry, self.inner.cache_ptr());
-                        return state.is_notified();
+                    #[cfg(not(all(feature = "loom", loom)))]
+                    {
+                        // Check for timeout.
+                        let now = Instant::now();
+                        if now >= deadline {
+                            // Remove the entry and check if notified.
+                            let mut list = lock();
+                            let state = list.remove(entry, self.inner.cache_ptr());
+                            return state.is_notified();
+                        }
+
+                        // Park until the deadline.
+                        parker.park_timeout(deadline - now);
                     }
 
-                    // Park until the deadline.
-                    parker.park_timeout(deadline - now);
+                    #[cfg(all(feature = "loom", loom))]
+                    {
+                        let _ = deadline;
+                        panic!("`wait_deadline` is not supported on loom");
+                    }
                 }
             }
 
