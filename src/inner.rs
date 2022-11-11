@@ -1,6 +1,6 @@
 //! The inner mechanism powering the `Event` type.
 
-use crate::list::{Entry, List};
+use crate::list::List;
 use crate::node::Node;
 use crate::queue::Queue;
 use crate::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -11,7 +11,6 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use core::ops;
-use core::ptr::NonNull;
 
 /// Inner state of [`Event`].
 pub(crate) struct Inner {
@@ -25,14 +24,6 @@ pub(crate) struct Inner {
 
     /// Queue of nodes waiting to be processed.
     queue: Queue,
-
-    /// A single cached list entry to avoid allocations on the fast path of the insertion.
-    ///
-    /// This field can only be written to when the `cache_used` field in the `list` structure
-    /// is false, or the user has a pointer to the `Entry` identical to this one and that user
-    /// has exclusive access to that `Entry`. An immutable pointer to this field is kept in
-    /// the `list` structure when it is in use.
-    cache: UnsafeCell<Entry>,
 }
 
 impl Inner {
@@ -42,7 +33,6 @@ impl Inner {
             notified: AtomicUsize::new(core::usize::MAX),
             list: Mutex::new(List::new()),
             queue: Queue::new(),
-            cache: UnsafeCell::new(Entry::new()),
         }
     }
 
@@ -61,12 +51,6 @@ impl Inner {
 
         // Acquire and drop the lock to make sure that the queue is flushed.
         let _guard = self.lock();
-    }
-
-    /// Returns the pointer to the single cached list entry.
-    #[inline(always)]
-    pub(crate) fn cache_ptr(&self) -> NonNull<Entry> {
-        unsafe { NonNull::new_unchecked(self.cache.get()) }
     }
 }
 
@@ -88,11 +72,11 @@ impl ListGuard<'_> {
         guard: &mut MutexGuard<'_, List>,
     ) {
         // Process the start node.
-        tasks.extend(start_node.apply(guard, self.inner));
+        tasks.extend(start_node.apply(guard));
 
         // Process all remaining nodes.
         while let Some(node) = self.inner.queue.pop() {
-            tasks.extend(node.apply(guard, self.inner));
+            tasks.extend(node.apply(guard));
         }
     }
 }
@@ -125,7 +109,7 @@ impl Drop for ListGuard<'_> {
         }
 
         // Update the atomic `notified` counter.
-        let notified = if list.notified < list.len {
+        let notified = if list.notified < list.len() {
             list.notified
         } else {
             core::usize::MAX

@@ -1,13 +1,12 @@
 //! The inner list of listeners.
 
-use crate::sync::atomic::{AtomicUsize, Ordering};
 use crate::sync::cell::Cell;
 use crate::Task;
 
-use alloc::boxed::Box;
-
 use core::mem;
-use core::ptr::{self, NonNull};
+use core::num::NonZeroUsize;
+
+use slab::Slab;
 
 /// The state of a listener.
 pub(crate) enum State {
@@ -36,85 +35,71 @@ impl State {
 
 /// An entry representing a registered listener.
 pub(crate) struct Entry {
-    /// Shared state used to coordinate the listener under contention.
-    ///
-    /// This is the only field that can be accessed without the list being locked.
-    shared_state: SharedState,
-
     /// The state of this listener.
     state: Cell<State>,
 
     /// Previous entry in the linked list.
-    prev: Cell<Option<NonNull<Entry>>>,
+    prev: Cell<Option<NonZeroUsize>>,
 
     /// Next entry in the linked list.
-    next: Cell<Option<NonNull<Entry>>>,
-}
-
-struct SharedState {
-    /// Information about this shared state.
-    state: AtomicUsize,
-
-    /// A task to wake up once we are inserted into the list.
-    insert_task: Cell<Option<Task>>,
+    next: Cell<Option<NonZeroUsize>>,
 }
 
 /// A linked list of entries.
 pub(crate) struct List {
+    /// The raw list of entries.
+    entries: Slab<Entry>,
+
     /// First entry in the list.
-    head: Option<NonNull<Entry>>,
+    head: Option<NonZeroUsize>,
 
     /// Last entry in the list.
-    tail: Option<NonNull<Entry>>,
+    tail: Option<NonZeroUsize>,
 
     /// The first unnotified entry in the list.
-    start: Option<NonNull<Entry>>,
-
-    /// Total number of entries in the list.
-    pub(crate) len: usize,
+    start: Option<NonZeroUsize>,
 
     /// The number of notified entries in the list.
     pub(crate) notified: usize,
-
-    /// Whether the cached entry is used.
-    cache_used: bool,
 }
 
 impl List {
     /// Create a new, empty list.
     pub(crate) fn new() -> Self {
+        // Create a Slab with a permanent entry occupying index 0, so that
+        // it is never used (and we can therefore use 0 as a sentinel value).
+        let mut entries = Slab::new();
+        entries.insert(Entry::new());
+
         Self {
+            entries,
             head: None,
             tail: None,
             start: None,
-            len: 0,
             notified: 0,
-            cache_used: false,
         }
     }
 
-    /// Allocate a new entry.
-    pub(crate) unsafe fn alloc(&mut self, cache: NonNull<Entry>) -> NonNull<Entry> {
-        if self.cache_used {
-            // Allocate an entry that is going to become the new tail.
-            NonNull::new_unchecked(Box::into_raw(Box::new(Entry::new())))
-        } else {
-            // No need to allocate - we can use the cached entry.
-            self.cache_used = true;
-            cache.as_ptr().write(Entry::new());
-            cache
-        }
+    /// Get the number of entries in the list.
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len() - 1
+    }
+
+    /// Get the state of the entry at the given index.
+    pub(crate) fn state(&self, index: NonZeroUsize) -> &Cell<State> {
+        &self.entries[index.get()].state
     }
 
     /// Inserts a new entry into the list.
-    pub(crate) fn insert(&mut self, entry: NonNull<Entry>) {
+    pub(crate) fn insert(&mut self, entry: Entry) -> NonZeroUsize {
         // Replace the tail with the new entry.
-        match mem::replace(&mut self.tail, Some(entry)) {
-            None => self.head = Some(entry),
-            Some(t) => unsafe {
-                t.as_ref().next.set(Some(entry));
-                entry.as_ref().prev.set(Some(t));
-            },
+        let key = NonZeroUsize::new(self.entries.vacant_key());
+        match mem::replace(&mut self.tail, key) {
+            None => self.head = key,
+            Some(t) => {
+                self.entries[t.get()].next.set(key);
+                entry.prev.set(Some(t));
+            }
         }
 
         // If there were no unnotified entries, this one is the first now.
@@ -122,59 +107,45 @@ impl List {
             self.start = self.tail;
         }
 
-        // Bump the entry count.
-        self.len += 1;
-    }
+        // Insert the entry into the slab.
+        self.entries.insert(entry);
 
-    /// De-allocate an entry.
-    unsafe fn dealloc(&mut self, entry: NonNull<Entry>, cache: NonNull<Entry>) -> State {
-        if ptr::eq(entry.as_ptr(), cache.as_ptr()) {
-            // Free the cached entry.
-            self.cache_used = false;
-            entry.as_ref().state.replace(State::Created)
-        } else {
-            // Deallocate the entry.
-            Box::from_raw(entry.as_ptr()).state.into_inner()
-        }
+        // Return the key.
+        key.unwrap()
     }
 
     /// Removes an entry from the list and returns its state.
-    pub(crate) fn remove(&mut self, entry: NonNull<Entry>, cache: NonNull<Entry>) -> State {
-        unsafe {
-            let prev = entry.as_ref().prev.get();
-            let next = entry.as_ref().next.get();
+    pub(crate) fn remove(&mut self, key: NonZeroUsize) -> State {
+        let entry = self.entries.remove(key.get());
+        let prev = entry.prev.get();
+        let next = entry.next.get();
 
-            // Unlink from the previous entry.
-            match prev {
-                None => self.head = next,
-                Some(p) => p.as_ref().next.set(next),
-            }
-
-            // Unlink from the next entry.
-            match next {
-                None => self.tail = prev,
-                Some(n) => n.as_ref().prev.set(prev),
-            }
-
-            // If this was the first unnotified entry, move the pointer to the next one.
-            if self.start == Some(entry) {
-                self.start = next;
-            }
-
-            // Extract the state.
-            let state = entry.as_ref().state.replace(State::Created);
-
-            // Delete the entry.
-            self.dealloc(entry, cache);
-
-            // Update the counters.
-            if state.is_notified() {
-                self.notified = self.notified.saturating_sub(1);
-            }
-            self.len = self.len.saturating_sub(1);
-
-            state
+        // Unlink from the previous entry.
+        match prev {
+            None => self.head = next,
+            Some(p) => self.entries[p.get()].next.set(next),
         }
+
+        // Unlink from the next entry.
+        match next {
+            None => self.tail = prev,
+            Some(n) => self.entries[n.get()].prev.set(prev),
+        }
+
+        // If this was the first unnotified entry, move the pointer to the next one.
+        if self.start == Some(key) {
+            self.start = next;
+        }
+
+        // Extract the state.
+        let state = entry.state.replace(State::Created);
+
+        // Update the counters.
+        if state.is_notified() {
+            self.notified = self.notified.saturating_sub(1);
+        }
+
+        state
     }
 
     /// Notifies a number of entries, either normally or as an additional notification.
@@ -203,7 +174,7 @@ impl List {
                 None => break,
                 Some(e) => {
                     // Get the entry and move the pointer forward.
-                    let e = unsafe { e.as_ref() };
+                    let e = &self.entries[e.get()];
                     self.start = e.next.get();
 
                     // Set the state of this entry to `Notified` and notify.
@@ -227,7 +198,7 @@ impl List {
                 None => break,
                 Some(e) => {
                     // Get the entry and move the pointer forward.
-                    let e = unsafe { e.as_ref() };
+                    let e = &self.entries[e.get()];
                     self.start = e.next.get();
 
                     // Set the state of this entry to `Notified` and notify.
@@ -245,89 +216,10 @@ impl Entry {
     /// Create a new, empty entry.
     pub(crate) fn new() -> Self {
         Self {
-            shared_state: SharedState {
-                state: AtomicUsize::new(0),
-                insert_task: Cell::new(None),
-            },
             state: Cell::new(State::Created),
             prev: Cell::new(None),
             next: Cell::new(None),
         }
-    }
-
-    /// Get the state of this entry.
-    pub(crate) fn state(&self) -> &Cell<State> {
-        &self.state
-    }
-
-    /// Tell whether this entry is currently queued.
-    ///
-    /// This is only ever used as an optimization for `wait_internal`, hence that fact that
-    /// it is `std`-exclusive
-    #[cfg(feature = "std")]
-    pub(crate) fn is_queued(&self) -> bool {
-        self.shared_state.state.load(Ordering::Acquire) & QUEUED != 0
-    }
-
-    /// Write to the temporary task.
-    #[cold]
-    #[cfg(feature = "std")]
-    pub(crate) fn write_task(&self, task: Task) {
-        // Acquire the WRITING_STATE lock.
-        let mut state = self
-            .shared_state
-            .state
-            .fetch_or(WRITING_STATE, Ordering::AcqRel);
-
-        // Wait until the WRITING_STATE lock is released.
-        while state & WRITING_STATE != 0 {
-            state = self
-                .shared_state
-                .state
-                .fetch_or(WRITING_STATE, Ordering::AcqRel);
-            crate::yield_now();
-        }
-
-        // Write the task.
-        self.shared_state.insert_task.set(Some(task));
-
-        // Release the WRITING_STATE lock.
-        self.shared_state
-            .state
-            .fetch_and(!WRITING_STATE, Ordering::Release);
-    }
-
-    /// Dequeue the entry.
-    pub(crate) fn dequeue(&self) -> Option<Task> {
-        // Acquire the WRITING_STATE lock.
-        let mut state = self
-            .shared_state
-            .state
-            .fetch_or(WRITING_STATE, Ordering::AcqRel);
-
-        // Wait until the WRITING_STATE lock is released.
-        while state & WRITING_STATE != 0 {
-            state = self
-                .shared_state
-                .state
-                .fetch_or(WRITING_STATE, Ordering::AcqRel);
-            crate::yield_now();
-        }
-
-        // Read the task.
-        let task = self.shared_state.insert_task.take();
-
-        // Release the WRITING_STATE lock and also remove the QUEUED bit.
-        self.shared_state
-            .state
-            .fetch_and(!WRITING_STATE & !QUEUED, Ordering::Release);
-
-        task
-    }
-
-    /// Indicate that this entry has been queued.
-    pub(crate) fn enqueue(&self) {
-        self.shared_state.state.fetch_or(QUEUED, Ordering::SeqCst);
     }
 
     /// Indicate that this entry has been notified.
@@ -343,9 +235,3 @@ impl Entry {
         true
     }
 }
-
-/// Set if we are currently queued.
-const QUEUED: usize = 1 << 0;
-
-/// Whether or not we are currently writing to the `insert_task` variable, synchronously.
-const WRITING_STATE: usize = 1 << 1;

@@ -37,7 +37,6 @@ impl Queue {
 
     /// Push a node to the tail end of the queue.
     pub(crate) fn push(&self, node: Node) {
-        node.enqueue();
         let node = Box::into_raw(Box::new(QueueNode {
             next: AtomicPtr::new(ptr::null_mut()),
             node,
