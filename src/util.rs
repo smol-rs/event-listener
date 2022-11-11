@@ -1,6 +1,5 @@
 use crate::sync::atomic::{AtomicPtr, Ordering};
 use crate::sync::Arc;
-use core::mem::ManuallyDrop;
 use core::ptr;
 
 /// An `Arc` that can be atomically racily initialized.
@@ -27,11 +26,10 @@ impl<T> RacyArc<T> {
 
     /// Initialize the `RacyArc` with the given `T`, and returning an
     /// `Arc` to it.
-    pub(crate) fn with_or_init<R>(
+    pub(crate) fn get_or_init(
         &self,
         init: impl FnOnce() -> T,
-        with: impl FnOnce(&Arc<T>) -> R,
-    ) -> R {
+    ) -> *const T {
         // Load the current value.
         let mut inner = self.ptr.load(Ordering::Acquire);
 
@@ -62,8 +60,7 @@ impl<T> RacyArc<T> {
         }
 
         // Convert the raw pointer back into an `Arc`.
-        let arc = ManuallyDrop::new(unsafe { Arc::from_raw(inner) });
-        with(&arc)
+        inner as *mut T
     }
 }
 

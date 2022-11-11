@@ -453,7 +453,7 @@ impl Event {
     /// This returns a raw pointer instead of reference because `from_raw`
     /// requires raw/mut provenance: <https://github.com/rust-lang/rust/pull/67339>
     fn inner(&self) -> *const Inner {
-        self.inner.with_or_init(Inner::new, |a| Arc::as_ptr(a))
+        self.inner.get_or_init(Inner::new)
     }
 }
 
