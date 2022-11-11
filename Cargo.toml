@@ -14,8 +14,16 @@ keywords = ["condvar", "eventcount", "wake", "blocking", "park"]
 categories = ["asynchronous", "concurrency"]
 exclude = ["/.*"]
 
+[features]
+default = ["std"]
+std = ["parking"]
+
+# Unstable, test only feature. Do not enable this.
+__test = []
+
 [dependencies]
-parking = "2.0.0"
+crossbeam-utils = { version = "0.8.12", default-features = false }
+parking = { version = "2.0.0", optional = true }
 
 [dev-dependencies]
 criterion = "0.3.4"
