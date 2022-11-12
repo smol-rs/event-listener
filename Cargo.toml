@@ -26,8 +26,12 @@ crossbeam-utils = { version = "0.8.12", default-features = false }
 parking = { version = "2.0.0", optional = true }
 
 [dev-dependencies]
-criterion = "0.3.4"
 waker-fn = "1"
+
+[dev-dependencies.criterion]
+version = "0.4.0"
+default-features = false
+features = ["cargo_bench_support"]
 
 [[bench]]
 name = "bench"
