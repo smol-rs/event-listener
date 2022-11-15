@@ -611,7 +611,7 @@ impl EventListener {
     fn wait_internal(mut self, deadline: Option<Instant>) -> bool {
         // Take out the entry pointer and set it to `None`.
         let (parker, unparker) = parking::pair();
-        let entry = match mem::replace(&mut self.state, ListenerState::Discarded) {
+        let entry = match self.state.take() {
             ListenerState::HasNode(entry) => entry,
             ListenerState::Queued(task_waiting) => {
                 // This listener is stuck in the backup queue.
@@ -718,9 +718,7 @@ impl EventListener {
     /// ```
     pub fn discard(mut self) -> bool {
         // If this listener has never picked up a notification...
-        if let ListenerState::HasNode(entry) =
-            mem::replace(&mut self.state, ListenerState::Discarded)
-        {
+        if let ListenerState::HasNode(entry) = self.state.take() {
             // Remove the listener from the list and return `true` if it was notified.
             if let Some(mut lock) = self.inner.lock() {
                 let state = lock.remove(entry);

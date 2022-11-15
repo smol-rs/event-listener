@@ -111,7 +111,9 @@ impl TaskWaiting {
     /// Register a listener.
     pub(crate) fn register(&self, task: Task) {
         // Set the task.
-        self.task.store(Some(task));
+        if let Some(task) = self.task.swap(Some(task)) {
+            task.wake();
+        }
 
         // If the entry ID is non-zero, then we are no longer queued.
         if self.status().is_some() {
