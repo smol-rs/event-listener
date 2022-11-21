@@ -3,8 +3,7 @@
 use crate::list::List;
 use crate::node::Node;
 use crate::queue::Queue;
-use crate::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use crate::sync::cell::UnsafeCell;
+use crate::sync::atomic::{AtomicUsize, Ordering};
 use crate::Task;
 
 use alloc::vec;
@@ -129,32 +128,22 @@ impl Drop for ListGuard<'_> {
 
 /// A simple mutex type that optimistically assumes that the lock is uncontended.
 struct Mutex<T> {
-    /// The inner value.
-    value: UnsafeCell<T>,
-
-    /// Whether the mutex is locked.
-    locked: AtomicBool,
+    inner: spin::Mutex<T>,
 }
 
 impl<T> Mutex<T> {
     /// Create a new mutex.
     pub(crate) fn new(value: T) -> Self {
         Self {
-            value: UnsafeCell::new(value),
-            locked: AtomicBool::new(false),
+            inner: spin::Mutex::new(value),
         }
     }
 
     /// Lock the mutex.
     pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         // Try to lock the mutex.
-        if self
-            .locked
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
-            // We have successfully locked the mutex.
-            Some(MutexGuard { mutex: self })
+        if let Some(guard) = self.inner.try_lock() {
+            Some(MutexGuard { guard })
         } else {
             self.try_lock_slow()
         }
@@ -167,17 +156,13 @@ impl<T> Mutex<T> {
         let mut spins = 100u32;
 
         loop {
-            if self
-                .locked
-                .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-                .is_ok()
-            {
+            if let Some(guard) = self.inner.try_lock() {
                 // We have successfully locked the mutex.
-                return Some(MutexGuard { mutex: self });
+                return Some(MutexGuard { guard });
             }
 
-            // Use atomic loads instead of compare-exchange.
-            while self.locked.load(Ordering::Relaxed) {
+            // Use is_locked instead of try_lock, as it is only a load as opposed to a swap.
+            while self.inner.is_locked() {
                 // Return None once we've exhausted the number of spins.
                 spins = spins.checked_sub(1)?;
             }
@@ -186,28 +171,19 @@ impl<T> Mutex<T> {
 }
 
 struct MutexGuard<'a, T> {
-    mutex: &'a Mutex<T>,
-}
-
-impl<'a, T> Drop for MutexGuard<'a, T> {
-    fn drop(&mut self) {
-        self.mutex.locked.store(false, Ordering::Release);
-    }
+    guard: spin::MutexGuard<'a, T>,
 }
 
 impl<'a, T> ops::Deref for MutexGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        unsafe { &*self.mutex.value.get() }
+        &self.guard
     }
 }
 
 impl<'a, T> ops::DerefMut for MutexGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.mutex.value.get() }
+        &mut self.guard
     }
 }
-
-unsafe impl<T: Send> Send for Mutex<T> {}
-unsafe impl<T: Send> Sync for Mutex<T> {}
