@@ -3,13 +3,13 @@
 use crate::list::{Entry, List, State};
 use crate::sync::atomic::{AtomicUsize, Ordering};
 use crate::sync::Arc;
-use crate::{Notify, NotifyKind, Task};
+use crate::{Notify, Task};
 
 use core::num::NonZeroUsize;
 use crossbeam_utils::atomic::AtomicCell;
 
 /// A node in the backup queue.
-pub(crate) enum Node {
+pub(crate) enum Node<T> {
     /// This node is requesting to add a listener.
     // For some reason, the MSRV build says this variant is never constructed.
     #[allow(dead_code)]
@@ -19,7 +19,7 @@ pub(crate) enum Node {
     },
 
     /// This node is notifying a listener.
-    Notify(Notify),
+    Notify(Notify<T>),
 
     /// This node is removing a listener.
     RemoveListener {
@@ -44,7 +44,7 @@ pub(crate) struct TaskWaiting {
     entry_id: AtomicUsize,
 }
 
-impl Node {
+impl<T> Node<T> {
     pub(crate) fn listener() -> (Self, Arc<TaskWaiting>) {
         // Create a new `TaskWaiting` structure.
         let task_waiting = Arc::new(TaskWaiting {
@@ -61,7 +61,10 @@ impl Node {
     }
 
     /// Apply the node to the list.
-    pub(crate) fn apply(self, list: &mut List) -> Option<Task> {
+    pub(crate) fn apply(self, list: &mut List<T>) -> Option<Task>
+    where
+        T: Clone,
+    {
         match self {
             Node::AddListener { task_waiting } => {
                 // Add a new entry to the list.
@@ -72,12 +75,9 @@ impl Node {
                 task_waiting.entry_id.store(key.get(), Ordering::Release);
                 return task_waiting.task.take();
             }
-            Node::Notify(Notify { count, kind }) => {
+            Node::Notify(Notify { count, kind, tag }) => {
                 // Notify the listener.
-                match kind {
-                    NotifyKind::Notify => list.notify_unnotified(count),
-                    NotifyKind::NotifyAdditional => list.notify_additional(count),
-                }
+                list.notify(count, kind.is_additional(), tag);
             }
             Node::RemoveListener {
                 listener,
@@ -86,9 +86,9 @@ impl Node {
                 // Remove the listener from the list.
                 let state = list.remove(listener);
 
-                if let (true, State::Notified(additional)) = (propagate, state) {
+                if let (true, State::Notified(additional, tag)) = (propagate, state) {
                     // Propagate the notification to the next listener.
-                    list.notify(1, additional);
+                    list.notify(1, additional, tag);
                 }
             }
             Node::Waiting(task) => {

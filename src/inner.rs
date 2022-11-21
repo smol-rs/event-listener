@@ -13,20 +13,20 @@ use alloc::vec::Vec;
 use core::ops;
 
 /// Inner state of [`Event`].
-pub(crate) struct Inner {
+pub(crate) struct Inner<T> {
     /// The number of notified entries, or `usize::MAX` if all of them have been notified.
     ///
     /// If there are no entries, this value is set to `usize::MAX`.
     pub(crate) notified: AtomicUsize,
 
     /// A linked list holding registered listeners.
-    list: Mutex<List>,
+    list: Mutex<List<T>>,
 
     /// Queue of nodes waiting to be processed.
-    queue: Queue,
+    queue: Queue<T>,
 }
 
-impl Inner {
+impl<T> Inner<T> {
     /// Create a new `Inner`.
     pub(crate) fn new() -> Self {
         Self {
@@ -37,7 +37,10 @@ impl Inner {
     }
 
     /// Locks the list.
-    pub(crate) fn lock(&self) -> Option<ListGuard<'_>> {
+    pub(crate) fn lock(&self) -> Option<ListGuard<'_, T>>
+    where
+        T: Clone,
+    {
         self.list.try_lock().map(|guard| ListGuard {
             inner: self,
             guard: Some(guard),
@@ -46,7 +49,10 @@ impl Inner {
 
     /// Push a pending operation to the queue.
     #[cold]
-    pub(crate) fn push(&self, node: Node) {
+    pub(crate) fn push(&self, node: Node<T>)
+    where
+        T: Clone,
+    {
         self.queue.push(node);
 
         // Acquire and drop the lock to make sure that the queue is flushed.
@@ -55,21 +61,21 @@ impl Inner {
 }
 
 /// The guard returned by [`Inner::lock`].
-pub(crate) struct ListGuard<'a> {
+pub(crate) struct ListGuard<'a, T: Clone> {
     /// Reference to the inner state.
-    inner: &'a Inner,
+    inner: &'a Inner<T>,
 
     /// The locked list.
-    guard: Option<MutexGuard<'a, List>>,
+    guard: Option<MutexGuard<'a, List<T>>>,
 }
 
-impl ListGuard<'_> {
+impl<T: Clone> ListGuard<'_, T> {
     #[cold]
     fn process_nodes_slow(
         &mut self,
-        start_node: Node,
+        start_node: Node<T>,
         tasks: &mut Vec<Task>,
-        guard: &mut MutexGuard<'_, List>,
+        guard: &mut MutexGuard<'_, List<T>>,
     ) {
         // Process the start node.
         tasks.extend(start_node.apply(guard));
@@ -81,21 +87,21 @@ impl ListGuard<'_> {
     }
 }
 
-impl ops::Deref for ListGuard<'_> {
-    type Target = List;
+impl<T: Clone> ops::Deref for ListGuard<'_, T> {
+    type Target = List<T>;
 
     fn deref(&self) -> &Self::Target {
         self.guard.as_ref().unwrap()
     }
 }
 
-impl ops::DerefMut for ListGuard<'_> {
+impl<T: Clone> ops::DerefMut for ListGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.guard.as_mut().unwrap()
     }
 }
 
-impl Drop for ListGuard<'_> {
+impl<T: Clone> Drop for ListGuard<'_, T> {
     fn drop(&mut self) {
         let Self { inner, guard } = self;
         let mut list = guard.take().unwrap();

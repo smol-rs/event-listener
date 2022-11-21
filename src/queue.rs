@@ -9,24 +9,24 @@ use alloc::boxed::Box;
 use core::ptr;
 
 /// A queue of nodes.
-pub(crate) struct Queue {
+pub(crate) struct Queue<T> {
     /// The head of the queue.
-    head: CachePadded<AtomicPtr<QueueNode>>,
+    head: CachePadded<AtomicPtr<QueueNode<T>>>,
 
     /// The tail of the queue.
-    tail: CachePadded<AtomicPtr<QueueNode>>,
+    tail: CachePadded<AtomicPtr<QueueNode<T>>>,
 }
 
 /// A single node in the `Queue`.
-struct QueueNode {
+struct QueueNode<T> {
     /// The next node in the queue.
-    next: AtomicPtr<QueueNode>,
+    next: AtomicPtr<QueueNode<T>>,
 
     /// Associated node data.
-    node: Node,
+    node: Node<T>,
 }
 
-impl Queue {
+impl<T> Queue<T> {
     /// Create a new queue.
     pub(crate) fn new() -> Self {
         Self {
@@ -36,7 +36,7 @@ impl Queue {
     }
 
     /// Push a node to the tail end of the queue.
-    pub(crate) fn push(&self, node: Node) {
+    pub(crate) fn push(&self, node: Node<T>) {
         let node = Box::into_raw(Box::new(QueueNode {
             next: AtomicPtr::new(ptr::null_mut()),
             node,
@@ -76,7 +76,7 @@ impl Queue {
     }
 
     /// Pop the oldest node from the head of the queue.
-    pub(crate) fn pop(&self) -> Option<Node> {
+    pub(crate) fn pop(&self) -> Option<Node<T>> {
         let mut head = self.head.load(Ordering::Relaxed);
 
         loop {

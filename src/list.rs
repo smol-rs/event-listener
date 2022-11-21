@@ -9,34 +9,47 @@ use core::num::NonZeroUsize;
 use slab::Slab;
 
 /// The state of a listener.
-pub(crate) enum State {
+pub(crate) enum State<T> {
     /// It has just been created.
     Created,
 
     /// It has received a notification.
     ///
-    /// The `bool` is `true` if this was an "additional" notification.
-    Notified(bool),
+    /// The `bool` is `true` if this was an "additional" notification. It also contains the tag
+    /// that it was notified with
+    Notified(bool, T),
 
     /// A task is polling it.
     Task(Task),
+
+    /// Dummy state.
+    Hole,
 }
 
-impl State {
-    /// Returns `true` if this is the `Notified` state.
+impl<T> State<T> {
+    /// Returns `true` if the state is `Notified`.
     #[inline]
     pub(crate) fn is_notified(&self) -> bool {
         match self {
-            State::Notified(_) => true,
+            State::Notified(..) | State::Hole => true,
             _ => false,
+        }
+    }
+
+    /// Returns `Some(notification)` if the state is `Notified`.
+    #[inline]
+    pub(crate) fn notified(self) -> Option<T> {
+        match self {
+            State::Notified(_, tag) => Some(tag),
+            _ => None,
         }
     }
 }
 
 /// An entry representing a registered listener.
-pub(crate) struct Entry {
+pub(crate) struct Entry<T> {
     /// The state of this listener.
-    state: Cell<State>,
+    state: Cell<State<T>>,
 
     /// Previous entry in the linked list.
     prev: Cell<Option<NonZeroUsize>>,
@@ -46,9 +59,9 @@ pub(crate) struct Entry {
 }
 
 /// A linked list of entries.
-pub(crate) struct List {
+pub(crate) struct List<T> {
     /// The raw list of entries.
-    entries: Slab<Entry>,
+    entries: Slab<Entry<T>>,
 
     /// First entry in the list.
     head: Option<NonZeroUsize>,
@@ -63,7 +76,7 @@ pub(crate) struct List {
     pub(crate) notified: usize,
 }
 
-impl List {
+impl<T> List<T> {
     /// Create a new, empty list.
     pub(crate) fn new() -> Self {
         // Create a Slab with a permanent entry occupying index 0, so that
@@ -86,12 +99,12 @@ impl List {
     }
 
     /// Get the state of the entry at the given index.
-    pub(crate) fn state(&self, index: NonZeroUsize) -> &Cell<State> {
+    pub(crate) fn state(&self, index: NonZeroUsize) -> &Cell<State<T>> {
         &self.entries[index.get()].state
     }
 
     /// Inserts a new entry into the list.
-    pub(crate) fn insert(&mut self, entry: Entry) -> NonZeroUsize {
+    pub(crate) fn insert(&mut self, entry: Entry<T>) -> NonZeroUsize {
         // Replace the tail with the new entry.
         let key = NonZeroUsize::new(self.entries.vacant_key()).unwrap();
         match mem::replace(&mut self.tail, Some(key)) {
@@ -115,7 +128,7 @@ impl List {
     }
 
     /// Removes an entry from the list and returns its state.
-    pub(crate) fn remove(&mut self, key: NonZeroUsize) -> State {
+    pub(crate) fn remove(&mut self, key: NonZeroUsize) -> State<T> {
         let entry = self.entries.remove(key.get());
         let prev = entry.prev.get();
         let next = entry.next.get();
@@ -150,17 +163,23 @@ impl List {
 
     /// Notifies a number of entries, either normally or as an additional notification.
     #[cold]
-    pub(crate) fn notify(&mut self, count: usize, additional: bool) {
+    pub(crate) fn notify(&mut self, count: usize, additional: bool, tag: T)
+    where
+        T: Clone,
+    {
         if additional {
-            self.notify_additional(count);
+            self.notify_additional(count, tag);
         } else {
-            self.notify_unnotified(count);
+            self.notify_unnotified(count, tag);
         }
     }
 
     /// Notifies a number of entries.
     #[cold]
-    pub(crate) fn notify_unnotified(&mut self, mut n: usize) {
+    pub(crate) fn notify_unnotified(&mut self, mut n: usize, tag: T)
+    where
+        T: Clone,
+    {
         if n <= self.notified {
             return;
         }
@@ -178,7 +197,7 @@ impl List {
                     self.start = e.next.get();
 
                     // Set the state of this entry to `Notified` and notify.
-                    let was_notified = e.notify(false);
+                    let was_notified = e.notify(false, tag.clone());
 
                     // Update the counter.
                     self.notified += was_notified as usize;
@@ -189,7 +208,10 @@ impl List {
 
     /// Notifies a number of additional entries.
     #[cold]
-    pub(crate) fn notify_additional(&mut self, mut n: usize) {
+    pub(crate) fn notify_additional(&mut self, mut n: usize, tag: T)
+    where
+        T: Clone,
+    {
         while n > 0 {
             n -= 1;
 
@@ -202,7 +224,7 @@ impl List {
                     self.start = e.next.get();
 
                     // Set the state of this entry to `Notified` and notify.
-                    let was_notified = e.notify(true);
+                    let was_notified = e.notify(true, tag.clone());
 
                     // Update the counter.
                     self.notified += was_notified as usize;
@@ -212,7 +234,7 @@ impl List {
     }
 }
 
-impl Entry {
+impl<T> Entry<T> {
     /// Create a new, empty entry.
     pub(crate) fn new() -> Self {
         Self {
@@ -224,11 +246,12 @@ impl Entry {
 
     /// Indicate that this entry has been notified.
     #[cold]
-    pub(crate) fn notify(&self, additional: bool) -> bool {
-        match self.state.replace(State::Notified(additional)) {
-            State::Notified(_) => {}
+    pub(crate) fn notify(&self, additional: bool, tag: T) -> bool {
+        match self.state.replace(State::Notified(additional, tag)) {
+            State::Notified(..) => {}
             State::Created => {}
             State::Task(w) => w.wake(),
+            State::Hole => unreachable!("Cannot poll an empty hole"),
         }
 
         // Return whether the notification would have had any effect.
