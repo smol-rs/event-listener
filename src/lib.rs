@@ -208,18 +208,19 @@ impl Event {
         let inner = self.inner();
 
         // Try to acquire a lock in the inner list.
-        let state = unsafe {
-            if let Some(mut lock) = (*inner).lock() {
+        let state = {
+            let inner = unsafe { &*inner };
+            if let Some(mut lock) = inner.lock() {
                 let entry = lock.insert(Entry::new());
 
                 ListenerState::HasNode(entry)
             } else {
                 // Push entries into the queue indicating that we want to push a listener.
                 let (node, entry) = Node::listener();
-                (*inner).push(node);
+                inner.push(node);
 
                 // Indicate that there are nodes waiting to be notified.
-                (*inner)
+                inner
                     .notified
                     .compare_exchange(usize::MAX, 0, Ordering::AcqRel, Ordering::Relaxed)
                     .ok();
