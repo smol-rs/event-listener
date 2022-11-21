@@ -93,11 +93,11 @@ impl List {
     /// Inserts a new entry into the list.
     pub(crate) fn insert(&mut self, entry: Entry) -> NonZeroUsize {
         // Replace the tail with the new entry.
-        let key = NonZeroUsize::new(self.entries.vacant_key());
-        match mem::replace(&mut self.tail, key) {
-            None => self.head = key,
+        let key = NonZeroUsize::new(self.entries.vacant_key()).unwrap();
+        match mem::replace(&mut self.tail, Some(key)) {
+            None => self.head = Some(key),
             Some(t) => {
-                self.entries[t.get()].next.set(key);
+                self.entries[t.get()].next.set(Some(key));
                 entry.prev.set(Some(t));
             }
         }
@@ -111,7 +111,7 @@ impl List {
         self.entries.insert(entry);
 
         // Return the key.
-        key.unwrap()
+        key
     }
 
     /// Removes an entry from the list and returns its state.
