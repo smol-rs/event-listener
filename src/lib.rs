@@ -721,7 +721,11 @@ impl<T: Clone> EventListener<T> {
                         // Remove the entry and check if notified.
                         let mut list = lock();
                         let state = list.remove(entry);
-                        return state.notified();
+
+                        match state {
+                            State::Notified(_, tag) => return Some(tag),
+                            _ => return None,
+                        }
                     }
 
                     // Park until the deadline.

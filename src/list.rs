@@ -35,15 +35,6 @@ impl<T> State<T> {
             _ => false,
         }
     }
-
-    /// Returns `Some(notification)` if the state is `Notified`.
-    #[inline]
-    pub(crate) fn notified(self) -> Option<T> {
-        match self {
-            State::Notified(_, tag) => Some(tag),
-            _ => None,
-        }
-    }
 }
 
 /// An entry representing a registered listener.
