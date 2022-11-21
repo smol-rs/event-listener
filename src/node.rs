@@ -1,11 +1,12 @@
 //! The node that makes up queues.
 
-use crate::inner::Inner;
 use crate::list::{Entry, List, State};
+use crate::sync::atomic::{AtomicUsize, Ordering};
+use crate::sync::Arc;
 use crate::{Notify, NotifyKind, Task};
 
-use alloc::boxed::Box;
-use core::ptr::NonNull;
+use core::num::NonZeroUsize;
+use crossbeam_utils::atomic::AtomicCell;
 
 /// A node in the backup queue.
 pub(crate) enum Node {
@@ -13,8 +14,8 @@ pub(crate) enum Node {
     // For some reason, the MSRV build says this variant is never constructed.
     #[allow(dead_code)]
     AddListener {
-        /// The pointer to the listener to add.
-        listener: Option<DistOwnedListener>,
+        /// The state of the listener that wants to be added.
+        task_waiting: Arc<TaskWaiting>,
     },
 
     /// This node is notifying a listener.
@@ -22,8 +23,8 @@ pub(crate) enum Node {
 
     /// This node is removing a listener.
     RemoveListener {
-        /// The pointer to the listener to remove.
-        listener: NonNull<Entry>,
+        /// The ID of the listener to remove.
+        listener: NonZeroUsize,
 
         /// Whether to propagate notifications to the next listener.
         propagate: bool,
@@ -33,54 +34,43 @@ pub(crate) enum Node {
     Waiting(Task),
 }
 
-pub(crate) struct DistOwnedListener(NonNull<Entry>);
+pub(crate) struct TaskWaiting {
+    /// The task that is being waited on.
+    task: AtomicCell<Option<Task>>,
 
-impl DistOwnedListener {
-    /// extracts the contained entry pointer from the DOL,
-    /// without calling the DOL Drop handler (such that the returned pointer stays valid)
-    fn take(self) -> NonNull<Entry> {
-        core::mem::ManuallyDrop::new(self).0
-    }
-}
-
-impl Drop for DistOwnedListener {
-    fn drop(&mut self) {
-        drop(unsafe { Box::from_raw(self.0.as_ptr()) });
-    }
+    /// The ID of the new entry.
+    ///
+    /// This is set to zero when the task is still queued.
+    entry_id: AtomicUsize,
 }
 
 impl Node {
-    pub(crate) fn listener() -> (Self, NonNull<Entry>) {
-        let entry = Box::into_raw(Box::new(Entry::new()));
-        let entry = unsafe { NonNull::new_unchecked(entry) };
+    pub(crate) fn listener() -> (Self, Arc<TaskWaiting>) {
+        // Create a new `TaskWaiting` structure.
+        let task_waiting = Arc::new(TaskWaiting {
+            task: AtomicCell::new(None),
+            entry_id: AtomicUsize::new(0),
+        });
+
         (
             Self::AddListener {
-                listener: Some(DistOwnedListener(entry)),
+                task_waiting: task_waiting.clone(),
             },
-            entry,
+            task_waiting,
         )
     }
 
-    /// Indicate that this node has been enqueued.
-    pub(crate) fn enqueue(&self) {
-        if let Node::AddListener {
-            listener: Some(entry),
-        } = self
-        {
-            unsafe { entry.0.as_ref() }.enqueue();
-        }
-    }
-
     /// Apply the node to the list.
-    pub(crate) fn apply(self, list: &mut List, inner: &Inner) -> Option<Task> {
+    pub(crate) fn apply(self, list: &mut List) -> Option<Task> {
         match self {
-            Node::AddListener { mut listener } => {
-                // Add the listener to the list.
-                let entry = listener.take().unwrap().take();
-                list.insert(entry);
+            Node::AddListener { task_waiting } => {
+                // Add a new entry to the list.
+                let entry = Entry::new();
+                let key = list.insert(entry);
 
-                // Dequeue the listener.
-                return unsafe { entry.as_ref().dequeue() };
+                // Send the new key to the listener and wake it if necessary.
+                task_waiting.entry_id.store(key.get(), Ordering::Release);
+                return task_waiting.task.take();
             }
             Node::Notify(Notify { count, kind }) => {
                 // Notify the listener.
@@ -94,7 +84,7 @@ impl Node {
                 propagate,
             } => {
                 // Remove the listener from the list.
-                let state = list.remove(listener, inner.cache_ptr());
+                let state = list.remove(listener);
 
                 if let (true, State::Notified(additional)) = (propagate, state) {
                     // Propagate the notification to the next listener.
@@ -107,5 +97,28 @@ impl Node {
         }
 
         None
+    }
+}
+
+impl TaskWaiting {
+    /// Determine if we are still queued.
+    ///
+    /// Returns `Some` with the entry ID if we are no longer queued.
+    pub(crate) fn status(&self) -> Option<NonZeroUsize> {
+        NonZeroUsize::new(self.entry_id.load(Ordering::Acquire))
+    }
+
+    /// Register a listener.
+    pub(crate) fn register(&self, task: Task) {
+        // Set the task.
+        if let Some(task) = self.task.swap(Some(task)) {
+            task.wake();
+        }
+
+        // If the entry ID is non-zero, then we are no longer queued.
+        if self.status().is_some() {
+            // Wake the task.
+            self.task.take().unwrap().wake();
+        }
     }
 }
