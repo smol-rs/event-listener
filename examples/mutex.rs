@@ -11,7 +11,8 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use event_listener::Event;
+use event_listener::{Event, EventListener};
+use futures_lite::pin;
 
 /// A simple mutex.
 struct Mutex<T> {
@@ -49,7 +50,8 @@ impl<T> Mutex<T> {
 
     /// Blocks until a lock is acquired.
     fn lock(&self) -> MutexGuard<'_, T> {
-        let mut listener = None;
+        let listener = None;
+        pin!(listener);
 
         loop {
             // Attempt grabbing a lock.
@@ -58,10 +60,15 @@ impl<T> Mutex<T> {
             }
 
             // Set up an event listener or wait for a notification.
-            match listener.take() {
+            match listener.as_mut().as_pin_mut() {
                 None => {
                     // Start listening and then try locking again.
-                    listener = Some(self.lock_ops.listen());
+                    listener.as_mut().set(Some(EventListener::new()));
+                    listener
+                        .as_mut()
+                        .as_pin_mut()
+                        .unwrap()
+                        .listen_to(&self.lock_ops);
                 }
                 Some(l) => {
                     // Wait until a notification is received.
@@ -74,7 +81,8 @@ impl<T> Mutex<T> {
     /// Blocks until a lock is acquired or the timeout is reached.
     fn lock_timeout(&self, timeout: Duration) -> Option<MutexGuard<'_, T>> {
         let deadline = Instant::now() + timeout;
-        let mut listener = None;
+        let listener = None;
+        pin!(listener);
 
         loop {
             // Attempt grabbing a lock.
@@ -83,10 +91,15 @@ impl<T> Mutex<T> {
             }
 
             // Set up an event listener or wait for an event.
-            match listener.take() {
+            match listener.as_mut().as_pin_mut() {
                 None => {
                     // Start listening and then try locking again.
-                    listener = Some(self.lock_ops.listen());
+                    listener.set(Some(EventListener::new()));
+                    listener
+                        .as_mut()
+                        .as_pin_mut()
+                        .unwrap()
+                        .listen_to(&self.lock_ops);
                 }
                 Some(l) => {
                     // Wait until a notification is received.
