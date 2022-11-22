@@ -645,6 +645,7 @@ impl fmt::Debug for EventListener<'_> {
 impl Future for EventListener<'_> {
     type Output = ();
 
+    #[allow(unreachable_patterns)]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // SAFETY: We only move fields that aren't `entry` out of `self`.
         let this = unsafe { self.get_unchecked_mut() };
