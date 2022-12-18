@@ -6,7 +6,7 @@
 //! structures. See a [simple mutex] implementation that exposes an async and a blocking interface
 //! for acquiring locks.
 //!
-//! [eventcounts]: http://www.1024cores.net/home/lock-free-algorithms/eventcounts
+//! [eventcounts]: https://www.1024cores.net/home/lock-free-algorithms/eventcounts
 //! [simple mutex]: https://github.com/smol-rs/event-listener/blob/master/examples/mutex.rs
 //!
 //! # Examples
