@@ -1,0 +1,16 @@
+[package]
+name = "event-listener-strategy"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+event-listener = { path = "../", default-features = false }
+pin-project-lite = "0.2.9"
+pin-utils = "0.1.0"
+
+[features]
+default = ["std"]
+std = ["event-listener/std"]
+
+[dev-dependencies]
+futures-lite = "1.12.0"
