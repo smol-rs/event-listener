@@ -149,6 +149,7 @@ macro_rules! easy_wrapper {
         }
 
         impl $name {
+            #[inline]
             fn _new(inner: $inner) -> Self {
                 Self {
                     _inner: $crate::FutureWrapper::new(inner)
@@ -156,6 +157,7 @@ macro_rules! easy_wrapper {
             }
 
             $(#[$wait_meta])*
+            #[inline]
             $wait_vis fn wait(self) -> $output {
                 use $crate::EventListenerFuture;
                 self._inner.into_inner().wait()
@@ -165,6 +167,7 @@ macro_rules! easy_wrapper {
         impl ::core::future::Future for $name {
             type Output = $output;
 
+            #[inline]
             fn poll(
                 self: ::core::pin::Pin<&mut Self>,
                 context: &mut ::core::task::Context<'_>
@@ -241,11 +244,13 @@ pin_project_lite::pin_project! {
 
 impl<F: EventListenerFuture> FutureWrapper<F> {
     /// Create a new `FutureWrapper` from the provided future.
+    #[inline]
     pub fn new(inner: F) -> Self {
         Self { inner }
     }
 
     /// Consume the `FutureWrapper`, returning the inner future.
+    #[inline]
     pub fn into_inner(self) -> F {
         self.inner
     }
@@ -253,27 +258,32 @@ impl<F: EventListenerFuture> FutureWrapper<F> {
 
 impl<F: ?Sized> FutureWrapper<F> {
     /// Get a reference to the inner future.
+    #[inline]
     pub fn get_ref(&self) -> &F {
         &self.inner
     }
 
     /// Get a mutable reference to the inner future.
+    #[inline]
     pub fn get_mut(&mut self) -> &mut F {
         &mut self.inner
     }
 
     /// Get a pinned mutable reference to the inner future.
+    #[inline]
     pub fn get_pin_mut(self: Pin<&mut Self>) -> Pin<&mut F> {
         self.project().inner
     }
 
     /// Get a pinned reference to the inner future.
+    #[inline]
     pub fn get_pin_ref(self: Pin<&Self>) -> Pin<&F> {
         self.project_ref().inner
     }
 }
 
 impl<F: EventListenerFuture> From<F> for FutureWrapper<F> {
+    #[inline]
     fn from(inner: F) -> Self {
         Self { inner }
     }
@@ -282,6 +292,7 @@ impl<F: EventListenerFuture> From<F> for FutureWrapper<F> {
 impl<F: EventListenerFuture + ?Sized> Future for FutureWrapper<F> {
     type Output = F::Output;
 
+    #[inline]
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
         self.project()
             .inner
@@ -351,10 +362,12 @@ impl<'a> Strategy for NonBlocking<'a> {
     type Context = Context<'a>;
     type Future = EventListener;
 
+    #[inline]
     fn wait(&mut self, evl: EventListener) -> Self::Future {
         evl
     }
 
+    #[inline]
     fn poll(
         &mut self,
         mut event_listener: EventListener,
@@ -374,15 +387,18 @@ pub struct Blocking {
     _private: (),
 }
 
+#[cfg(feature = "std")]
 impl Strategy for Blocking {
     type Context = ();
     type Future = Ready;
 
+    #[inline]
     fn wait(&mut self, evl: EventListener) -> Self::Future {
         evl.wait();
         Ready { _private: () }
     }
 
+    #[inline]
     fn poll(
         &mut self,
         event_listener: EventListener,
@@ -394,6 +410,7 @@ impl Strategy for Blocking {
 }
 
 /// A future that is always ready.
+#[cfg(feature = "std")]
 #[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct Ready {
@@ -403,6 +420,7 @@ pub struct Ready {
 impl Future for Ready {
     type Output = ();
 
+    #[inline]
     fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
         Poll::Ready(())
     }
