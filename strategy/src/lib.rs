@@ -69,7 +69,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![forbid(unsafe_code)]
+#![forbid(unsafe_code, future_incompatible, missing_docs)]
 
 use core::future::Future;
 use core::marker::PhantomData;
@@ -80,23 +80,23 @@ use event_listener::EventListener;
 use pin_utils::pin_mut;
 
 /// A wrapper around an [`EventListenerFuture`] that can be easily exported for use.
-/// 
+///
 /// This type implements [`Future`], has a `_new()` constructor, and a `wait()` method
 /// that uses the [`Blocking`] strategy to poll the future until it is ready.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// mod my_future {
-///     use event_listener_strategy::{easy_wrapper, EventListenerFuture, Strategy}; 
+///     use event_listener_strategy::{easy_wrapper, EventListenerFuture, Strategy};
 ///     use std::pin::Pin;
 ///     use std::task::Poll;
-/// 
+///
 ///     struct MyFuture;
-/// 
+///
 ///     impl EventListenerFuture for MyFuture {
 ///         type Output = ();
-/// 
+///
 ///         fn poll_with_strategy<S: Strategy>(
 ///             self: Pin<&mut Self>,
 ///             strategy: &mut S,
@@ -106,33 +106,33 @@ use pin_utils::pin_mut;
 /// #           Poll::Ready(())
 ///         }
 ///     }
-/// 
+///
 ///     easy_wrapper! {
 ///         /// A future that does something.
 ///         pub struct MyFutureWrapper(MyFuture => ());
 ///         /// Wait for it.
 ///         pub wait();
 ///     }
-/// 
+///
 ///     impl MyFutureWrapper {
 ///         /// Create a new instance of the future.
 ///         pub fn new() -> Self {
-///             Self::_new(MyFuture) 
+///             Self::_new(MyFuture)
 ///         }
 ///     }
 /// }
-/// 
+///
 /// use my_future::MyFutureWrapper;
-/// 
+///
 /// // Use the future in a blocking context.
 /// let future = MyFutureWrapper::new();
 /// future.wait();
-/// 
+///
 /// // Use the future in a non-blocking context.
 /// futures_lite::future::block_on(async {
 ///     let future = MyFutureWrapper::new();
 ///     future.await;
-/// }); 
+/// });
 /// ```
 #[macro_export]
 macro_rules! easy_wrapper {
@@ -165,7 +165,7 @@ macro_rules! easy_wrapper {
         }
 
         impl ::core::future::Future for $name {
-            type Output = $output; 
+            type Output = $output;
 
             fn poll(
                 self: ::core::pin::Pin<&mut Self>,
@@ -340,6 +340,7 @@ pub trait Strategy {
     fn wait(&mut self, evl: EventListener) -> Self::Future;
 }
 
+/// A strategy that uses polling to efficiently wait for an event.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct NonBlocking<'a> {
     _marker: PhantomData<Context<'a>>,
@@ -365,6 +366,7 @@ impl<'a> Strategy for NonBlocking<'a> {
     }
 }
 
+/// A strategy that blocks the current thread until the event is signalled.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[cfg(feature = "std")]
 pub struct Blocking {
@@ -373,11 +375,11 @@ pub struct Blocking {
 
 impl Strategy for Blocking {
     type Context = ();
-    type Future = core::future::Ready<()>;
+    type Future = Ready;
 
     fn wait(&mut self, evl: EventListener) -> Self::Future {
         evl.wait();
-        core::future::ready(())
+        Ready { _private: () }
     }
 
     fn poll(
@@ -387,5 +389,19 @@ impl Strategy for Blocking {
     ) -> Result<(), EventListener> {
         event_listener.wait();
         Ok(())
+    }
+}
+
+/// A future that is always ready.
+#[derive(Debug, Clone)]
+pub struct Ready {
+    _private: (),
+}
+
+impl Future for Ready {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
+        Poll::Ready(())
     }
 }
