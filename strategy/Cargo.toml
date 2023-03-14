@@ -2,9 +2,17 @@
 name = "event-listener-strategy"
 version = "0.1.0"
 edition = "2018"
+authors = ["John Nunley <jtnunley01@gmail.com>"]
+rust-version = "1.39"
+description = "Block or poll on event_listener easily"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/smol-rs/event-listener"
+keywords = ["condvar", "envcount", "wake", "blocking", "park"]
+categories = ["asynchronous", "concurrency"]
+exclude = ["/.*"]
 
 [dependencies]
-event-listener = { path = "../", default-features = false }
+event-listener = { path = "..", version = "2", default-features = false }
 pin-project-lite = "0.2.9"
 pin-utils = "0.1.0"
 

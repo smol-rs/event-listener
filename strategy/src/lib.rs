@@ -1,14 +1,10 @@
 // SPDX-Licenser-Identifier: MIT OR Apache-2.0
-
-//! A strategy for using the [`event-listener`] crate in both blocking
-//! and non-blocking contexts.
+//! A strategy for using the [`event-listener`] crate in both blocking and non-blocking contexts.
 //!
-//! One of the stand-out features of the [`event-listener`] crate is
-//! the ability to use it in both asynchronous and synchronous contexts.
-//! However, sometimes using it like this causes a lot of boilerplate
-//! to be duplicated. This crate aims to reduce that boilerplate by
-//! providing an [`EventListenerFuture`] trait that implements
-//! both blocking and non-blocking functionality.
+//! One of the stand-out features of the [`event-listener`] crate is the ability to use it in both
+//! asynchronous and synchronous contexts. However, sometimes using it like this causes a lot of
+//! boilerplate to be duplicated. This crate aims to reduce that boilerplate by providing an
+//! [`EventListenerFuture`] trait that implements both blocking and non-blocking functionality.
 //!
 //! # Examples
 //!
@@ -69,7 +65,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
-#![forbid(unsafe_code, future_incompatible, missing_docs)]
+#![forbid(future_incompatible, missing_docs)]
 
 use core::future::Future;
 use core::marker::PhantomData;
@@ -77,7 +73,9 @@ use core::pin::Pin;
 use core::task::{Context, Poll};
 
 use event_listener::EventListener;
-use pin_utils::pin_mut;
+
+#[doc(hidden)]
+pub use pin_project_lite::pin_project;
 
 /// A wrapper around an [`EventListenerFuture`] that can be easily exported for use.
 ///
@@ -142,7 +140,7 @@ macro_rules! easy_wrapper {
         $(#[$wait_meta:meta])*
         $wait_vis: vis wait();
     ) => {
-        ::pin_project_lite::pin_project! {
+        $crate::pin_project! {
             $(#[$meta])*
             $vis struct $name {
                 #[pin]
@@ -207,14 +205,17 @@ pub trait EventListenerFuture {
     /// Wait for the future to complete, blocking the current thread.
     ///
     /// This function uses the [`Blocking`] strategy to poll the future until it is ready.
+    ///
+    /// The future should only return `Pending` if `Strategy::poll` returns error. Otherwise,
+    /// this function polls the future in a hot loop.
     #[cfg(feature = "std")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-    fn wait(self) -> Self::Output
+    fn wait(mut self) -> Self::Output
     where
         Self: Sized,
     {
-        let this = self;
-        pin_mut!(this);
+        // SAFETY: `self`/`this` is not moved out after this.
+        let mut this = unsafe { Pin::new_unchecked(&mut self) };
 
         loop {
             if let Poll::Ready(res) = this
@@ -393,6 +394,7 @@ impl Strategy for Blocking {
 }
 
 /// A future that is always ready.
+#[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct Ready {
     _private: (),
