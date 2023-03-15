@@ -68,9 +68,6 @@ use core::task::{Context, Poll};
 
 use event_listener::EventListener;
 
-#[doc(hidden)]
-pub use pin_project_lite::pin_project;
-
 /// A wrapper around an [`EventListenerFuture`] that can be easily exported for use.
 ///
 /// This type implements [`Future`], has a `_new()` constructor, and a `wait()` method
@@ -134,12 +131,9 @@ macro_rules! easy_wrapper {
         $(#[$wait_meta:meta])*
         $wait_vis: vis wait();
     ) => {
-        $crate::pin_project! {
-            $(#[$meta])*
-            $vis struct $name {
-                #[pin]
-                _inner: $crate::FutureWrapper<$inner>
-            }
+        $(#[$meta])*
+        $vis struct $name {
+            _inner: $crate::FutureWrapper<$inner>
         }
 
         impl $name {
@@ -166,7 +160,10 @@ macro_rules! easy_wrapper {
                 self: ::core::pin::Pin<&mut Self>,
                 context: &mut ::core::task::Context<'_>
             ) -> ::core::task::Poll<Self::Output> {
-                self.project()._inner.poll(context)
+                // SAFETY: We are pinned, so our inner type must be pinned too.
+                unsafe {
+                    self.map_unchecked_mut(|this| &mut this._inner).poll(context)
+                }
             }
         }
     };
@@ -225,15 +222,12 @@ pub trait EventListenerFuture {
     }
 }
 
-pin_project_lite::pin_project! {
-    /// A wrapper around an [`EventListenerFuture`] that implements [`Future`].
-    ///
-    /// [`Future`]: core::future::Future
-    #[derive(Debug, Clone)]
-    pub struct FutureWrapper<F: ?Sized> {
-        #[pin]
-        inner: F,
-    }
+/// A wrapper around an [`EventListenerFuture`] that implements [`Future`].
+///
+/// [`Future`]: core::future::Future
+#[derive(Debug, Clone)]
+pub struct FutureWrapper<F: ?Sized> {
+    inner: F,
 }
 
 impl<F: EventListenerFuture> FutureWrapper<F> {
@@ -266,13 +260,15 @@ impl<F: ?Sized> FutureWrapper<F> {
     /// Get a pinned mutable reference to the inner future.
     #[inline]
     pub fn get_pin_mut(self: Pin<&mut Self>) -> Pin<&mut F> {
-        self.project().inner
+        // SAFETY: We are pinned, so our inner type must be pinned too.
+        unsafe { self.map_unchecked_mut(|this| &mut this.inner) }
     }
 
     /// Get a pinned reference to the inner future.
     #[inline]
     pub fn get_pin_ref(self: Pin<&Self>) -> Pin<&F> {
-        self.project_ref().inner
+        // SAFETY: We are pinned, so our inner type must be pinned too.
+        unsafe { self.map_unchecked(|this| &this.inner) }
     }
 }
 
@@ -288,8 +284,7 @@ impl<F: EventListenerFuture + ?Sized> Future for FutureWrapper<F> {
 
     #[inline]
     fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        self.project()
-            .inner
+        self.get_pin_mut()
             .poll_with_strategy(&mut NonBlocking::default(), context)
     }
 }

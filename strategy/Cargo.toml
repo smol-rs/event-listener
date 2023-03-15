@@ -13,8 +13,6 @@ exclude = ["/.*"]
 
 [dependencies]
 event-listener = { path = "..", version = "2", default-features = false }
-pin-project-lite = "0.2.9"
-pin-utils = "0.1.0"
 
 [features]
 default = ["std"]
