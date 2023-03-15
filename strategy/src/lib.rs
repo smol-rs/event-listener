@@ -417,6 +417,7 @@ pub struct Ready {
     _private: (),
 }
 
+#[cfg(feature = "std")]
 impl Future for Ready {
     type Output = ();
 
