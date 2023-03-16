@@ -63,19 +63,24 @@ impl crate::Inner {
         let entry = unsafe {
             // SAFETY: We never move out the `link` field.
             let listener = match listener.get_unchecked_mut() {
-                listener @ None => listener.insert(Listener {
-                    link: UnsafeCell::new(Link {
-                        state: Cell::new(State::Created),
-                        prev: Cell::new(inner.tail),
-                        next: Cell::new(None),
-                    }),
-                    _pin: PhantomPinned,
-                }),
+                listener @ None => {
+                    // TODO: Use Option::insert once the MSRV is high enough.
+                    *listener = Some(Listener {
+                        link: UnsafeCell::new(Link {
+                            state: Cell::new(State::Created),
+                            prev: Cell::new(inner.tail),
+                            next: Cell::new(None),
+                        }),
+                        _pin: PhantomPinned,
+                    });
+
+                    listener.as_mut().unwrap()
+                }
                 Some(_) => return,
             };
 
             // Get the inner pointer.
-            &mut *listener.link.get()
+            &*listener.link.get()
         };
 
         // Replace the tail with the new entry.
@@ -123,7 +128,7 @@ impl crate::Inner {
         let entry = unsafe {
             // SAFETY: We never move out the `link` field.
             let listener = listener.as_mut().get_unchecked_mut().as_mut()?;
-            &mut *listener.link.get()
+            &*listener.link.get()
         };
 
         // Take out the state and check it.
@@ -183,7 +188,7 @@ impl Inner {
         match next {
             None => self.tail = prev,
             Some(n) => unsafe {
-                n.as_ref().next.set(prev);
+                n.as_ref().prev.set(prev);
             },
         }
 
@@ -340,5 +345,30 @@ mod tests {
         // Remove one.
         assert_eq!(inner.remove(listen2, false), Some(State::Created));
         assert_eq!(inner.lock().len, 2);
+
+        // Remove another.
+        assert_eq!(inner.remove(listen1, false), Some(State::Created));
+        assert_eq!(inner.lock().len, 1);
+    }
+
+    #[test]
+    fn drop_non_notified() {
+        let inner = crate::Inner::new();
+        make_listeners!(listen1, listen2, listen3);
+
+        // Register the listeners.
+        inner.insert(listen1.as_mut());
+        inner.insert(listen2.as_mut());
+        inner.insert(listen3.as_mut());
+
+        // Notify one.
+        inner.notify(1, false);
+
+        // Remove one.
+        inner.remove(listen3, true);
+
+        // Remove the rest.
+        inner.remove(listen1, true);
+        inner.remove(listen2, true);
     }
 }

@@ -81,6 +81,8 @@ use core::ptr;
 use core::task::{Context, Poll, Waker};
 
 #[cfg(feature = "std")]
+use parking::{Parker, Unparker};
+#[cfg(feature = "std")]
 use std::time::{Duration, Instant};
 
 use sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
@@ -661,7 +663,7 @@ impl<B: Borrow<Inner> + Unpin> Listener<B> {
 
         std::thread_local! {
             /// Cached thread-local parker/unparker pair.
-            static PARKER: RefCell<Option<(parking::Parker, Task)>> = RefCell::new(None);
+            static PARKER: RefCell<Option<(Parker, Task)>> = RefCell::new(None);
         }
 
         // Try to borrow the thread-local parker/unparker pair.
@@ -693,7 +695,7 @@ impl<B: Borrow<Inner> + Unpin> Listener<B> {
     fn wait_with_parker(
         self: Pin<&mut Self>,
         deadline: Option<Instant>,
-        parker: &parking::Parker,
+        parker: &Parker,
         unparker: TaskRef<'_>,
     ) -> bool {
         let (inner, mut listener) = self.project();
@@ -818,7 +820,7 @@ enum Task {
 
     /// An unparker that wakes up a thread.
     #[cfg(feature = "std")]
-    Unparker(parking::Unparker),
+    Unparker(Unparker),
 }
 
 impl Task {
@@ -855,7 +857,7 @@ enum TaskRef<'a> {
 
     /// An unparker that wakes up a thread.
     #[cfg(feature = "std")]
-    Unparker(&'a parking::Unparker),
+    Unparker(&'a Unparker),
 }
 
 impl TaskRef<'_> {

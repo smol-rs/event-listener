@@ -39,6 +39,7 @@ jobs:
         run: cargo check -Z features=dev_dep
       - run: cargo test --all
       - run: cargo test --no-default-features --tests
+      - run: cargo build -p event-listener-strategy --no-default-features
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - run: rustup target add thumbv7m-none-eabi
@@ -56,6 +57,7 @@ jobs:
       - name: Install Rust
         run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
       - run: cargo build --all
+      - run: cargo build --all --no-default-features
 
   clippy:
     runs-on: ubuntu-latest
