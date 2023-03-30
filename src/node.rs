@@ -1,6 +1,6 @@
 //! The node that makes up queues.
 
-use crate::list::{Entry, List};
+use crate::list::{Entry, ListenerSlab};
 use crate::sync::atomic::{AtomicUsize, Ordering};
 use crate::sync::Arc;
 use crate::{Notify, NotifyKind, State, Task};
@@ -61,7 +61,7 @@ impl Node {
     }
 
     /// Apply the node to the list.
-    pub(crate) fn apply(self, list: &mut List) -> Option<Task> {
+    pub(crate) fn apply(self, list: &mut ListenerSlab) -> Option<Task> {
         match self {
             Node::AddListener { task_waiting } => {
                 // Add a new entry to the list.

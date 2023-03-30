@@ -1,12 +1,106 @@
 //! The inner list of listeners.
 
-use crate::sync::cell::Cell;
-use crate::State;
+use crate::node::Node;
+use crate::queue::Queue;
+use crate::sync::atomic::{AtomicBool, Ordering};
+use crate::sync::cell::{Cell, UnsafeCell};
+use crate::{State, Task};
 
 use core::mem;
 use core::num::NonZeroUsize;
+use core::ops;
 
 use slab::Slab;
+
+pub(crate) struct List {
+    /// The inner list.
+    pub(crate) inner: Mutex<ListenerSlab>,
+
+    /// The queue of pending operations.
+    pub(crate) queue: Queue,
+}
+
+impl List {
+    pub(super) fn new() -> List {
+        List {
+            inner: Mutex::new(ListenerSlab::new()),
+            queue: Queue::new(),
+        }
+    }
+}
+
+/// The guard returned by [`Inner::lock`].
+pub(crate) struct ListGuard<'a> {
+    /// Reference to the inner state.
+    pub(crate) inner: &'a crate::Inner,
+
+    /// The locked list.
+    pub(crate) guard: Option<MutexGuard<'a, ListenerSlab>>,
+}
+
+impl ListGuard<'_> {
+    #[cold]
+    fn process_nodes_slow(
+        &mut self,
+        start_node: Node,
+        tasks: &mut Vec<Task>,
+        guard: &mut MutexGuard<'_, ListenerSlab>,
+    ) {
+        // Process the start node.
+        tasks.extend(start_node.apply(guard));
+
+        // Process all remaining nodes.
+        while let Some(node) = self.inner.list.queue.pop() {
+            tasks.extend(node.apply(guard));
+        }
+    }
+}
+
+impl ops::Deref for ListGuard<'_> {
+    type Target = ListenerSlab;
+
+    fn deref(&self) -> &Self::Target {
+        self.guard.as_ref().unwrap()
+    }
+}
+
+impl ops::DerefMut for ListGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.guard.as_mut().unwrap()
+    }
+}
+
+impl Drop for ListGuard<'_> {
+    fn drop(&mut self) {
+        let Self { inner, guard } = self;
+        let mut list = guard.take().unwrap();
+
+        // Tasks to wakeup after releasing the lock.
+        let mut tasks = vec![];
+
+        // Process every node left in the queue.
+        if let Some(start_node) = inner.list.queue.pop() {
+            self.process_nodes_slow(start_node, &mut tasks, &mut list);
+        }
+
+        // Update the atomic `notified` counter.
+        let notified = if list.notified < list.len() {
+            list.notified
+        } else {
+            core::usize::MAX
+        };
+
+        self.inner.notified.store(notified, Ordering::Release);
+
+        // Drop the actual lock.
+        drop(list);
+
+        // Wakeup all tasks.
+        for task in tasks {
+            task.wake();
+        }
+    }
+}
 
 /// An entry representing a registered listener.
 pub(crate) struct Entry {
@@ -21,7 +115,7 @@ pub(crate) struct Entry {
 }
 
 /// A linked list of entries.
-pub(crate) struct List {
+pub(crate) struct ListenerSlab {
     /// The raw list of entries.
     entries: Slab<Entry>,
 
@@ -38,7 +132,7 @@ pub(crate) struct List {
     pub(crate) notified: usize,
 }
 
-impl List {
+impl ListenerSlab {
     /// Create a new, empty list.
     pub(crate) fn new() -> Self {
         // Create a Slab with a permanent entry occupying index 0, so that
@@ -210,3 +304,88 @@ impl Entry {
         true
     }
 }
+
+/// A simple mutex type that optimistically assumes that the lock is uncontended.
+pub(crate) struct Mutex<T> {
+    /// The inner value.
+    value: UnsafeCell<T>,
+
+    /// Whether the mutex is locked.
+    locked: AtomicBool,
+}
+
+impl<T> Mutex<T> {
+    /// Create a new mutex.
+    pub(crate) fn new(value: T) -> Self {
+        Self {
+            value: UnsafeCell::new(value),
+            locked: AtomicBool::new(false),
+        }
+    }
+
+    /// Lock the mutex.
+    pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
+        // Try to lock the mutex.
+        if self
+            .locked
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            // We have successfully locked the mutex.
+            Some(MutexGuard { mutex: self })
+        } else {
+            self.try_lock_slow()
+        }
+    }
+
+    #[cold]
+    fn try_lock_slow(&self) -> Option<MutexGuard<'_, T>> {
+        // Assume that the contention is short-term.
+        // Spin for a while to see if the mutex becomes unlocked.
+        let mut spins = 100u32;
+
+        loop {
+            if self
+                .locked
+                .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                // We have successfully locked the mutex.
+                return Some(MutexGuard { mutex: self });
+            }
+
+            // Use atomic loads instead of compare-exchange.
+            while self.locked.load(Ordering::Relaxed) {
+                // Return None once we've exhausted the number of spins.
+                spins = spins.checked_sub(1)?;
+            }
+        }
+    }
+}
+
+pub(crate) struct MutexGuard<'a, T> {
+    mutex: &'a Mutex<T>,
+}
+
+impl<'a, T> Drop for MutexGuard<'a, T> {
+    fn drop(&mut self) {
+        self.mutex.locked.store(false, Ordering::Release);
+    }
+}
+
+impl<'a, T> ops::Deref for MutexGuard<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        unsafe { &*self.mutex.value.get() }
+    }
+}
+
+impl<'a, T> ops::DerefMut for MutexGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.mutex.value.get() }
+    }
+}
+
+unsafe impl<T: Send> Send for Mutex<T> {}
+unsafe impl<T: Send> Sync for Mutex<T> {}
