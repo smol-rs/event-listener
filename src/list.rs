@@ -1,37 +1,12 @@
 //! The inner list of listeners.
 
 use crate::sync::cell::Cell;
-use crate::Task;
+use crate::State;
 
 use core::mem;
 use core::num::NonZeroUsize;
 
 use slab::Slab;
-
-/// The state of a listener.
-pub(crate) enum State {
-    /// It has just been created.
-    Created,
-
-    /// It has received a notification.
-    ///
-    /// The `bool` is `true` if this was an "additional" notification.
-    Notified(bool),
-
-    /// A task is polling it.
-    Task(Task),
-}
-
-impl State {
-    /// Returns `true` if this is the `Notified` state.
-    #[inline]
-    pub(crate) fn is_notified(&self) -> bool {
-        match self {
-            State::Notified(_) => true,
-            _ => false,
-        }
-    }
-}
 
 /// An entry representing a registered listener.
 pub(crate) struct Entry {

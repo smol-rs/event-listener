@@ -1,9 +1,9 @@
 //! The node that makes up queues.
 
-use crate::list::{Entry, List, State};
+use crate::list::{Entry, List};
 use crate::sync::atomic::{AtomicUsize, Ordering};
 use crate::sync::Arc;
-use crate::{Notify, NotifyKind, Task};
+use crate::{Notify, NotifyKind, State, Task};
 
 use core::num::NonZeroUsize;
 use crossbeam_utils::atomic::AtomicCell;
