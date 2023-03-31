@@ -14,6 +14,14 @@ use core::ops;
 use slab::Slab;
 
 impl crate::Inner {
+    /// Locks the list.
+    fn lock(&self) -> Option<ListGuard<'_>> {
+        self.list.inner.try_lock().map(|guard| ListGuard {
+            inner: self,
+            guard: Some(guard),
+        })
+    }
+
     /// Add a new listener to the list.
     ///
     /// Does nothing if the list is already registered.

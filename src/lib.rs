@@ -165,7 +165,7 @@ struct Inner {
     /// The number of notified entries, or `usize::MAX` if all of them have been notified.
     ///
     /// If there are no entries, this value is set to `usize::MAX`.
-    pub(crate) notified: AtomicUsize,
+    notified: AtomicUsize,
 
     /// Inner queue of event listeners.
     list: list::List,
@@ -178,14 +178,6 @@ impl Inner {
             notified: AtomicUsize::new(core::usize::MAX),
             list: list::List::new(),
         }
-    }
-
-    /// Locks the list.
-    pub(crate) fn lock(&self) -> Option<list::ListGuard<'_>> {
-        self.list.inner.try_lock().map(|guard| list::ListGuard {
-            inner: self,
-            guard: Some(guard),
-        })
     }
 }
 
