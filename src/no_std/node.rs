@@ -1,8 +1,10 @@
+//! An operation that can be delayed.
+
 //! The node that makes up queues.
 
-use super::ListenerSlab;
 use crate::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use crate::sync::Arc;
+use crate::sys::ListenerSlab;
 use crate::{State, Task};
 
 use alloc::boxed::Box;
@@ -32,7 +34,7 @@ pub(crate) enum Node {
     /// This node is removing a listener.
     RemoveListener {
         /// The ID of the listener to remove.
-        key: NonZeroUsize,
+        listener: NonZeroUsize,
 
         /// Whether to propagate notifications to the next listener.
         propagate: bool,
@@ -42,6 +44,7 @@ pub(crate) enum Node {
     Waiting(Task),
 }
 
+#[derive(Debug)]
 pub(crate) struct TaskWaiting {
     /// The task that is being waited on.
     task: AtomicCell<Task>,
@@ -69,7 +72,7 @@ impl Node {
     }
 
     /// Apply the node to the list.
-    pub(crate) fn apply(self, list: &mut ListenerSlab) -> Option<Task> {
+    pub(super) fn apply(self, list: &mut ListenerSlab) -> Option<Task> {
         match self {
             Node::AddListener { task_waiting } => {
                 // Add a new entry to the list.
@@ -77,15 +80,19 @@ impl Node {
 
                 // Send the new key to the listener and wake it if necessary.
                 task_waiting.entry_id.store(key.get(), Ordering::Release);
+
                 return task_waiting.task.take().map(|t| *t);
             }
             Node::Notify { count, additional } => {
-                // Notify the listener.
+                // Notify the next `count` listeners.
                 list.notify(count, additional);
             }
-            Node::RemoveListener { key, propagate } => {
+            Node::RemoveListener {
+                listener,
+                propagate,
+            } => {
                 // Remove the listener from the list.
-                list.remove(key, propagate);
+                list.remove(listener, propagate);
             }
             Node::Waiting(task) => {
                 return Some(task);

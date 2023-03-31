@@ -7,11 +7,9 @@ use std::usize;
 use event_listener::{Event, EventListener};
 use waker_fn::waker_fn;
 
-fn is_notified(listener: &mut Pin<Box<EventListener>>) -> bool {
+fn is_notified(listener: Pin<&mut EventListener>) -> bool {
     let waker = waker_fn(|| ());
-    Pin::new(listener)
-        .poll(&mut Context::from_waker(&waker))
-        .is_ready()
+    listener.poll(&mut Context::from_waker(&waker)).is_ready()
 }
 
 #[test]
@@ -22,16 +20,16 @@ fn notify() {
     let mut l2 = event.listen();
     let mut l3 = event.listen();
 
-    assert!(!is_notified(&mut l1));
-    assert!(!is_notified(&mut l2));
-    assert!(!is_notified(&mut l3));
+    assert!(!is_notified(l1.as_mut()));
+    assert!(!is_notified(l2.as_mut()));
+    assert!(!is_notified(l3.as_mut()));
 
     event.notify(2);
     event.notify(1);
 
-    assert!(is_notified(&mut l1));
-    assert!(is_notified(&mut l2));
-    assert!(!is_notified(&mut l3));
+    assert!(is_notified(l1.as_mut()));
+    assert!(is_notified(l2.as_mut()));
+    assert!(!is_notified(l3.as_mut()));
 }
 
 #[test]
@@ -46,9 +44,9 @@ fn notify_additional() {
     event.notify(1);
     event.notify_additional(1);
 
-    assert!(is_notified(&mut l1));
-    assert!(is_notified(&mut l2));
-    assert!(!is_notified(&mut l3));
+    assert!(is_notified(l1.as_mut()));
+    assert!(is_notified(l2.as_mut()));
+    assert!(!is_notified(l3.as_mut()));
 }
 
 #[test]
@@ -58,15 +56,15 @@ fn notify_one() {
     let mut l1 = event.listen();
     let mut l2 = event.listen();
 
-    assert!(!is_notified(&mut l1));
-    assert!(!is_notified(&mut l2));
+    assert!(!is_notified(l1.as_mut()));
+    assert!(!is_notified(l2.as_mut()));
 
     event.notify(1);
-    assert!(is_notified(&mut l1));
-    assert!(!is_notified(&mut l2));
+    assert!(is_notified(l1.as_mut()));
+    assert!(!is_notified(l2.as_mut()));
 
     event.notify(1);
-    assert!(is_notified(&mut l2));
+    assert!(is_notified(l2.as_mut()));
 }
 
 #[test]
@@ -76,12 +74,12 @@ fn notify_all() {
     let mut l1 = event.listen();
     let mut l2 = event.listen();
 
-    assert!(!is_notified(&mut l1));
-    assert!(!is_notified(&mut l2));
+    assert!(!is_notified(l1.as_mut()));
+    assert!(!is_notified(l2.as_mut()));
 
     event.notify(usize::MAX);
-    assert!(is_notified(&mut l1));
-    assert!(is_notified(&mut l2));
+    assert!(is_notified(l1.as_mut()));
+    assert!(is_notified(l2.as_mut()));
 }
 
 #[test]
@@ -94,8 +92,8 @@ fn drop_notified() {
 
     event.notify(1);
     drop(l1);
-    assert!(is_notified(&mut l2));
-    assert!(!is_notified(&mut l3));
+    assert!(is_notified(l2.as_mut()));
+    assert!(!is_notified(l3.as_mut()));
 }
 
 #[test]
@@ -108,8 +106,8 @@ fn drop_notified2() {
 
     event.notify(2);
     drop(l1);
-    assert!(is_notified(&mut l2));
-    assert!(!is_notified(&mut l3));
+    assert!(is_notified(l2.as_mut()));
+    assert!(!is_notified(l3.as_mut()));
 }
 
 #[test]
@@ -124,9 +122,9 @@ fn drop_notified_additional() {
     event.notify_additional(1);
     event.notify(2);
     drop(l1);
-    assert!(is_notified(&mut l2));
-    assert!(is_notified(&mut l3));
-    assert!(!is_notified(&mut l4));
+    assert!(is_notified(l2.as_mut()));
+    assert!(is_notified(l3.as_mut()));
+    assert!(!is_notified(l4.as_mut()));
 }
 
 #[test]
@@ -139,8 +137,8 @@ fn drop_non_notified() {
 
     event.notify(1);
     drop(l3);
-    assert!(is_notified(&mut l1));
-    assert!(!is_notified(&mut l2));
+    assert!(is_notified(l1.as_mut()));
+    assert!(!is_notified(l2.as_mut()));
 }
 
 #[test]

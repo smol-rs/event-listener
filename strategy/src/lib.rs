@@ -38,7 +38,7 @@
 //!     type Output = ();
 //!
 //!     fn poll_with_strategy<'a, S: Strategy<'a>>(
-//!         mut self: Pin<&mut Self>,
+//!         mut self: Pin<&'a mut Self>,
 //!         strategy: &mut S,
 //!         context: &mut S::Context,
 //!     ) -> Poll<Self::Output> {
@@ -194,7 +194,7 @@ pub trait EventListenerFuture {
     /// This function should use the `Strategy::poll` method to poll the future, and proceed
     /// based on the result.
     fn poll_with_strategy<'a, S: Strategy<'a>>(
-        self: Pin<&mut Self>,
+        self: Pin<&'a mut Self>,
         strategy: &mut S,
         context: &mut S::Context,
     ) -> Poll<Self::Output>;
@@ -323,7 +323,7 @@ impl<F: EventListenerFuture + ?Sized> Future for FutureWrapper<F> {
 /// wait_on(listener.as_mut(), &mut Blocking::default()).await;
 ///
 /// // Poll the future.
-/// let mut listener = ev.listen();
+/// listener.as_mut().listen();
 /// ev.notify(1);
 ///
 /// wait_on(listener.as_mut(), &mut NonBlocking::default()).await;
@@ -349,16 +349,16 @@ pub trait Strategy<'a> {
 
 /// A strategy that uses polling to efficiently wait for an event.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct NonBlocking<'a, 'b> {
-    _marker: PhantomData<(Context<'a>, Pin<&'b mut EventListener>)>,
+pub struct NonBlocking<'a> {
+    _marker: PhantomData<Context<'a>>,
 }
 
-impl<'a, 'b> Strategy<'b> for NonBlocking<'a, 'b> {
+impl<'a, 'evl> Strategy<'evl> for NonBlocking<'a> {
     type Context = Context<'a>;
-    type Future = Pin<&'b mut EventListener>;
+    type Future = Pin<&'evl mut EventListener>;
 
     #[inline]
-    fn wait(&mut self, evl: Self::Future) -> Self::Future {
+    fn wait(&mut self, evl: Pin<&'evl mut EventListener>) -> Self::Future {
         evl
     }
 
@@ -380,12 +380,12 @@ pub struct Blocking {
 }
 
 #[cfg(feature = "std")]
-impl<'a> Strategy<'a> for Blocking {
+impl<'evl> Strategy<'evl> for Blocking {
     type Context = ();
     type Future = Ready;
 
     #[inline]
-    fn wait(&mut self, evl: Pin<&mut EventListener>) -> Self::Future {
+    fn wait(&mut self, evl: Pin<&'evl mut EventListener>) -> Self::Future {
         evl.wait();
         Ready { _private: () }
     }

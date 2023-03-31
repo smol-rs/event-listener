@@ -1,4 +1,4 @@
-//! The queue of nodes that keeps track of pending operations.
+//! An atomic queue of operations to process.
 
 use super::node::Node;
 use crate::sync::atomic::{AtomicPtr, Ordering};
@@ -6,105 +6,215 @@ use crate::sync::atomic::{AtomicPtr, Ordering};
 use alloc::boxed::Box;
 use core::ptr;
 
-/// A queue of nodes.
-pub(crate) struct Queue {
+/// An naive atomic queue of operations to process.
+pub(super) struct Queue {
     /// The head of the queue.
-    head: AtomicPtr<QueueNode>,
+    head: AtomicPtr<Link>,
 
     /// The tail of the queue.
-    tail: AtomicPtr<QueueNode>,
+    tail: AtomicPtr<Link>,
 }
 
-/// A single node in the `Queue`.
-struct QueueNode {
-    /// The next node in the queue.
-    next: AtomicPtr<QueueNode>,
-
-    /// Associated node data.
+struct Link {
+    /// The inner node.
     node: Node,
+
+    /// The next node in the queue.
+    next: AtomicPtr<Link>,
 }
 
 impl Queue {
-    /// Create a new queue.
-    pub(crate) fn new() -> Self {
+    /// Create a new, empty queue.
+    pub(super) fn new() -> Self {
         Self {
             head: AtomicPtr::new(ptr::null_mut()),
             tail: AtomicPtr::new(ptr::null_mut()),
         }
     }
 
-    /// Push a node to the tail end of the queue.
-    pub(crate) fn push(&self, node: Node) {
-        let node = Box::into_raw(Box::new(QueueNode {
-            next: AtomicPtr::new(ptr::null_mut()),
+    /// Push a new node onto the queue.
+    pub(super) fn push(&self, node: Node) {
+        // Allocate a new link.
+        let link = Box::into_raw(Box::new(Link {
             node,
+            next: AtomicPtr::new(ptr::null_mut()),
         }));
 
-        // Push the node to the tail end of the queue.
-        let mut tail = self.tail.load(Ordering::Relaxed);
-
-        // Get the next() pointer we have to overwrite.
-        let next_ptr = if tail.is_null() {
-            &self.head
-        } else {
-            unsafe { &(*tail).next }
-        };
-
+        // Push the link onto the queue.
+        let mut tail = self.tail.load(Ordering::Acquire);
         loop {
-            match next_ptr.compare_exchange(
-                ptr::null_mut(),
-                node,
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => {
-                    // Either set the tail to the new node, or let whoever beat us have it
-                    let _ = self.tail.compare_exchange(
-                        tail,
-                        node,
-                        Ordering::Release,
-                        Ordering::Relaxed,
-                    );
-
+            // If the tail is null, then the queue is empty.
+            if tail.is_null() {
+                // Try to set the head to the new link.
+                if self
+                    .head
+                    .compare_exchange(ptr::null_mut(), link, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    // We successfully set the head, so we can set the tail.
+                    self.tail.store(link, Ordering::Release);
                     return;
                 }
-                Err(next) => tail = next,
+
+                // The head was set by another thread, so we need to try again.
+                tail = self.tail.load(Ordering::Acquire);
             }
+
+            unsafe {
+                // Try to set the next pointer of the current tail.
+                let next = (*tail).next.load(Ordering::Acquire);
+                if next.is_null()
+                    && (*tail)
+                        .next
+                        .compare_exchange(
+                            ptr::null_mut(),
+                            link,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                {
+                    // We successfully set the next pointer, so we can set the tail.
+                    self.tail.store(link, Ordering::Release);
+                    return;
+                }
+            }
+
+            // The next pointer was set by another thread, so we need to try again.
+            tail = self.tail.load(Ordering::Acquire);
         }
     }
 
-    /// Pop the oldest node from the head of the queue.
-    pub(crate) fn pop(&self) -> Option<Node> {
-        let mut head = self.head.load(Ordering::Relaxed);
-
+    /// Pop a node from the queue.
+    pub(super) fn pop(&self) -> Option<Node> {
+        // Pop the head of the queue.
+        let mut head = self.head.load(Ordering::Acquire);
         loop {
+            // If the head is null, then the queue is empty.
             if head.is_null() {
                 return None;
             }
 
-            let next = unsafe { (*head).next.load(Ordering::Relaxed) };
-
-            match self
-                .head
-                .compare_exchange(head, next, Ordering::Release, Ordering::Relaxed)
-            {
-                Ok(_) => {
-                    // We have successfully popped the head of the queue.
-                    let node = unsafe { Box::from_raw(head) };
-
-                    // If next is also null, set the tail to null as well.
+            unsafe {
+                // Try to set the head to the next pointer.
+                let next = (*head).next.load(Ordering::Acquire);
+                if self
+                    .head
+                    .compare_exchange(head, next, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    // We successfully set the head, so we can set the tail if the queue is now empty.
                     if next.is_null() {
-                        let _ = self.tail.compare_exchange(
-                            head,
-                            ptr::null_mut(),
-                            Ordering::Release,
-                            Ordering::Relaxed,
-                        );
+                        self.tail.store(ptr::null_mut(), Ordering::Release);
                     }
 
-                    return Some(node.node);
+                    // Return the popped node.
+                    let boxed = Box::from_raw(head);
+                    return Some(boxed.node);
                 }
-                Err(h) => head = h,
+            }
+
+            // The head was set by another thread, so we need to try again.
+            head = self.head.load(Ordering::Acquire);
+        }
+    }
+}
+
+impl Drop for Queue {
+    fn drop(&mut self) {
+        // Pop all nodes from the queue.
+        while self.pop().is_some() {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node_from_num(num: usize) -> Node {
+        Node::Notify {
+            count: num,
+            additional: true,
+        }
+    }
+
+    fn node_to_num(node: Node) -> usize {
+        match node {
+            Node::Notify {
+                count,
+                additional: true,
+            } => count,
+            _ => panic!("unexpected node"),
+        }
+    }
+
+    #[test]
+    fn push_pop() {
+        let queue = Queue::new();
+
+        queue.push(node_from_num(1));
+        queue.push(node_from_num(2));
+        queue.push(node_from_num(3));
+
+        assert_eq!(node_to_num(queue.pop().unwrap()), 1);
+        assert_eq!(node_to_num(queue.pop().unwrap()), 2);
+        assert_eq!(node_to_num(queue.pop().unwrap()), 3);
+        assert!(queue.pop().is_none());
+    }
+
+    #[test]
+    fn push_pop_many() {
+        const COUNT: usize = if cfg!(miri) { 10 } else { 1_000 };
+
+        for i in 0..COUNT {
+            let queue = Queue::new();
+
+            for j in 0..i {
+                queue.push(node_from_num(j));
+            }
+
+            for j in 0..i {
+                assert_eq!(node_to_num(queue.pop().unwrap()), j);
+            }
+
+            assert!(queue.pop().is_none());
+        }
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn push_pop_many_threads() {
+        use crate::sync::Arc;
+
+        const NUM_THREADS: usize = 3;
+        const COUNT: usize = 50;
+
+        let mut handles = Vec::new();
+        let queue = Arc::new(Queue::new());
+
+        for _ in 0..NUM_THREADS {
+            let queue = queue.clone();
+
+            handles.push(std::thread::spawn(move || {
+                for i in 0..COUNT {
+                    queue.push(node_from_num(i));
+                }
+            }));
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let mut items = Vec::new();
+        while let Some(node) = queue.pop() {
+            items.push(node_to_num(node));
+        }
+
+        items.sort_unstable();
+        for i in 0..COUNT {
+            for j in 0..NUM_THREADS {
+                assert_eq!(items[i * NUM_THREADS + j], i);
             }
         }
     }
