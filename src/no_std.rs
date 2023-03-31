@@ -1,4 +1,13 @@
-//! The inner list of listeners.
+//! Implementation of `event-listener` built exclusively on atomics.
+//!
+//! On `no_std`, we don't have access to `Mutex`, so we can't use intrusive linked lists like the `std`
+//! implementation. Normally, we would use a concurrent atomic queue to store listeners, but benchmarks
+//! show that using queues in this way is very slow, especially for the single threaded use-case.
+//!
+//! We've found that it's easier to assume that the `Event` won't be under high contention in most use
+//! cases. Therefore, we use a spinlock that protects a linked list of listeners, and fall back to an
+//! atomic queue if the lock is contended. Benchmarks show that this is about 20% slower than the std
+//! implementation, but still much faster than using a queue.
 
 #[path = "no_std/node.rs"]
 mod node;

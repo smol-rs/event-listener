@@ -65,10 +65,8 @@
 
 extern crate alloc;
 
-#[cfg(feature = "std")]
-extern crate std;
-
-#[path = "no_std.rs"]
+#[cfg_attr(feature = "std", path = "std.rs")]
+#[cfg_attr(not(feature = "std"), path = "no_std.rs")]
 mod sys;
 
 use alloc::sync::Arc;
@@ -903,9 +901,14 @@ fn full_fence() {
 
 /// Synchronization primitive implementation.
 mod sync {
-    pub(super) use alloc::sync::Arc;
     pub(super) use core::cell;
     pub(super) use core::sync::atomic;
+
+    #[cfg(not(feature = "std"))]
+    pub(super) use alloc::sync::Arc;
+
+    #[cfg(feature = "std")]
+    pub(super) use std::sync::{Mutex, MutexGuard};
 
     pub(super) trait WithMut {
         type Output;
