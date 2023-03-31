@@ -77,8 +77,7 @@ use alloc::sync::Arc;
 
 use core::fmt;
 use core::future::Future;
-use core::mem::{self, ManuallyDrop};
-use core::num::NonZeroUsize;
+use core::mem::ManuallyDrop;
 use core::pin::Pin;
 use core::ptr;
 use core::task::{Context, Poll, Waker};
@@ -91,8 +90,7 @@ use std::panic::{RefUnwindSafe, UnwindSafe};
 #[cfg(feature = "std")]
 use std::time::{Duration, Instant};
 
-use list::Entry;
-use node::{Node, TaskWaiting};
+use node::Node;
 
 #[cfg(feature = "std")]
 use parking::Unparker;
@@ -108,6 +106,14 @@ enum Task {
 }
 
 impl Task {
+    fn as_task_ref(&self) -> TaskRef<'_> {
+        match self {
+            Self::Waker(waker) => TaskRef::Waker(waker),
+            #[cfg(feature = "std")]
+            Self::Thread(unparker) => TaskRef::Unparker(unparker),
+        }
+    }
+
     /// Notifies the task or thread.
     fn wake(self) {
         match self {
@@ -116,6 +122,42 @@ impl Task {
             Task::Thread(unparker) => {
                 unparker.unpark();
             }
+        }
+    }
+}
+
+/// A reference to a task.
+#[derive(Clone, Copy)]
+enum TaskRef<'a> {
+    /// A waker that wakes up a future.
+    Waker(&'a Waker),
+
+    /// An unparker that wakes up a thread.
+    #[cfg(feature = "std")]
+    Unparker(&'a parking::Unparker),
+}
+
+impl TaskRef<'_> {
+    /// Tells if this task will wake up the other task.
+    fn will_wake(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Waker(a), Self::Waker(b)) => a.will_wake(b),
+            #[cfg(feature = "std")]
+            (Self::Unparker(_), Self::Unparker(_)) => {
+                // TODO: Use unreleased will_unpark API.
+                false
+            }
+            #[cfg(feature = "std")]
+            _ => false,
+        }
+    }
+
+    /// Converts this task reference to a task by cloning.
+    fn into_task(self) -> Task {
+        match self {
+            Self::Waker(waker) => Task::Waker(waker.clone()),
+            #[cfg(feature = "std")]
+            Self::Unparker(unparker) => Task::Thread(unparker.clone()),
         }
     }
 }
@@ -244,33 +286,13 @@ impl Event {
     pub fn listen(&self) -> EventListener {
         let inner = self.inner();
 
-        // Try to acquire a lock in the inner list.
-        let state = {
-            let inner = unsafe { &*inner };
-            if let Some(mut lock) = inner.lock() {
-                let entry = lock.insert(Entry::new());
-
-                ListenerState::HasNode(entry)
-            } else {
-                // Push entries into the queue indicating that we want to push a listener.
-                let (node, entry) = Node::listener();
-                inner.push(node);
-
-                // Indicate that there are nodes waiting to be notified.
-                inner
-                    .notified
-                    .compare_exchange(usize::MAX, 0, Ordering::AcqRel, Ordering::Relaxed)
-                    .ok();
-
-                ListenerState::Queued(entry)
-            }
-        };
-
         // Register the listener.
-        let listener = EventListener {
+        let mut listener = EventListener {
             inner: unsafe { Arc::clone(&ManuallyDrop::new(Arc::from_raw(inner))) },
-            state,
+            state: list::Listener::Discarded,
         };
+
+        listener.inner.insert(&mut listener.state);
 
         // Make sure the listener is registered before whatever happens next.
         full_fence();
@@ -565,18 +587,7 @@ pub struct EventListener {
     inner: Arc<Inner>,
 
     /// The current state of the listener.
-    state: ListenerState,
-}
-
-enum ListenerState {
-    /// The listener has a node inside of the linked list.
-    HasNode(NonZeroUsize),
-
-    /// The listener has already been notified and has discarded its entry.
-    Discarded,
-
-    /// The listener has an entry in the queue that may or may not have a task waiting.
-    Queued(Arc<TaskWaiting>),
+    state: list::Listener,
 }
 
 #[cfg(feature = "std")]
@@ -647,54 +658,25 @@ impl EventListener {
     }
 
     fn wait_internal(mut self, deadline: Option<Instant>) -> bool {
-        // Take out the entry pointer and set it to `None`.
         let (parker, unparker) = parking::pair();
-        let entry = match self.state.take() {
-            ListenerState::HasNode(entry) => entry,
-            ListenerState::Queued(task_waiting) => {
-                // This listener is stuck in the backup queue.
-                // Wait for the task to be notified.
-                loop {
-                    match task_waiting.status() {
-                        Some(entry_id) => break entry_id,
-                        None => {
-                            // Register a task and park until it is notified.
-                            task_waiting.register(Task::Thread(unparker.clone()));
 
-                            parker.park();
-                        }
-                    }
-                }
-            }
-            ListenerState::Discarded => panic!("Cannot wait on a discarded listener"),
-        };
-
-        // Wait for the lock to be available.
-        let lock = || {
-            loop {
-                match self.inner.lock() {
-                    Some(lock) => return lock,
-                    None => {
-                        // Wake us up when the lock is free.
-                        let unparker = parker.unparker();
-                        self.inner.push(Node::Waiting(Task::Thread(unparker)));
-                        parker.park()
-                    }
-                }
-            }
-        };
-
-        // Set this listener's state to `Waiting`.
+        // Set the listener's state to `Task`.
+        match self
+            .inner
+            .register(&mut self.state, TaskRef::Unparker(&unparker))
         {
-            let mut list = lock();
+            Some(true) => {
+                // We were already notified, so we don't need to park.
+                return true;
+            }
 
-            // If the listener was notified, we're done.
-            match list.state(entry).replace(State::Notified(false)) {
-                State::Notified(_) => {
-                    list.remove(entry);
-                    return true;
-                }
-                _ => list.state(entry).set(State::Task(Task::Thread(unparker))),
+            Some(false) => {
+                // We're now waiting for a notification.
+            }
+
+            None => {
+                // We were never inserted into the list.
+                panic!("listener was never inserted into the list");
             }
         }
 
@@ -707,10 +689,12 @@ impl EventListener {
                     // Check for timeout.
                     let now = Instant::now();
                     if now >= deadline {
-                        // Remove the entry and check if notified.
-                        let mut list = lock();
-                        let state = list.remove(entry);
-                        return state.is_notified();
+                        // Remove our entry and check if we were notified.
+                        return self
+                            .inner
+                            .remove(&mut self.state, false)
+                            .expect("We never removed ourself from the list")
+                            .is_notified();
                     }
 
                     // Park until the deadline.
@@ -718,17 +702,13 @@ impl EventListener {
                 }
             }
 
-            let mut list = lock();
-
-            // Do a dummy replace operation in order to take out the state.
-            match list.state(entry).replace(State::Notified(false)) {
-                State::Notified(_) => {
-                    // If this listener has been notified, remove it from the list and return.
-                    list.remove(entry);
-                    return true;
-                }
-                // Otherwise, set the state back to `Waiting`.
-                state => list.state(entry).set(state),
+            // See if we were notified.
+            if self
+                .inner
+                .register(&mut self.state, TaskRef::Unparker(&unparker))
+                .expect("We never removed ourself from the list")
+            {
+                return true;
             }
         }
     }
@@ -755,25 +735,9 @@ impl EventListener {
     /// assert!(!listener2.discard());
     /// ```
     pub fn discard(mut self) -> bool {
-        // If this listener has never picked up a notification...
-        if let ListenerState::HasNode(entry) = self.state.take() {
-            // Remove the listener from the list and return `true` if it was notified.
-            if let Some(mut lock) = self.inner.lock() {
-                let state = lock.remove(entry);
-
-                if let State::Notified(_) = state {
-                    return true;
-                }
-            } else {
-                // Let someone else do it for us.
-                self.inner.push(Node::RemoveListener {
-                    listener: entry,
-                    propagate: false,
-                });
-            }
-        }
-
-        false
+        self.inner
+            .remove(&mut self.state, false)
+            .map_or(false, |state| state.is_notified())
     }
 
     /// Returns `true` if this listener listens to the given `Event`.
@@ -821,105 +785,35 @@ impl Future for EventListener {
     type Output = ();
 
     #[allow(unreachable_patterns)]
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let entry = match self.state {
-            ListenerState::Discarded => {
-                unreachable!("cannot poll a completed `EventListener` future")
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+
+        // Try to register the listener.
+        match this
+            .inner
+            .register(&mut this.state, TaskRef::Waker(cx.waker()))
+        {
+            Some(true) => {
+                // We were already notified, so we don't need to park.
+                Poll::Ready(())
             }
-            ListenerState::HasNode(ref entry) => *entry,
-            ListenerState::Queued(ref task_waiting) => {
-                loop {
-                    // See if the task waiting has been completed.
-                    match task_waiting.status() {
-                        Some(entry_id) => {
-                            self.state = ListenerState::HasNode(entry_id);
-                            break entry_id;
-                        }
-                        None => {
-                            // If not, wait for it to complete.
-                            task_waiting.register(Task::Waker(cx.waker().clone()));
-                            if task_waiting.status().is_none() {
-                                return Poll::Pending;
-                            }
-                        }
-                    }
-                }
+
+            Some(false) => {
+                // We're now waiting for a notification.
+                Poll::Pending
             }
-        };
-        let mut list = match self.inner.lock() {
-            Some(list) => list,
+
             None => {
-                // Wait for the lock to be available.
-                self.inner
-                    .push(Node::Waiting(Task::Waker(cx.waker().clone())));
-
-                // If the lock is suddenly available, we need to poll again.
-                if let Some(list) = self.inner.lock() {
-                    list
-                } else {
-                    return Poll::Pending;
-                }
-            }
-        };
-        let state = list.state(entry);
-
-        // Do a dummy replace operation in order to take out the state.
-        match state.replace(State::Notified(false)) {
-            State::Notified(_) => {
-                // If this listener has been notified, remove it from the list and return.
-                list.remove(entry);
-                drop(list);
-                self.state = ListenerState::Discarded;
-                return Poll::Ready(());
-            }
-            State::Created => {
-                // If the listener was just created, put it in the `Polling` state.
-                state.set(State::Task(Task::Waker(cx.waker().clone())));
-            }
-            State::Task(Task::Waker(w)) => {
-                // If the listener was in the `Polling` state, update the waker.
-                if w.will_wake(cx.waker()) {
-                    state.set(State::Task(Task::Waker(w)));
-                } else {
-                    state.set(State::Task(Task::Waker(cx.waker().clone())));
-                }
-            }
-            State::Task(_) => {
-                unreachable!("cannot poll and wait on `EventListener` at the same time")
+                // We were never inserted into the list.
+                panic!("listener was never inserted into the list");
             }
         }
-
-        Poll::Pending
     }
 }
 
 impl Drop for EventListener {
     fn drop(&mut self) {
-        // If this listener has never picked up a notification...
-        if let ListenerState::HasNode(entry) = self.state.take() {
-            match self.inner.lock() {
-                Some(mut list) => {
-                    // But if a notification was delivered to it...
-                    if let State::Notified(additional) = list.remove(entry) {
-                        // Then pass it on to another active listener.
-                        list.notify(1, additional);
-                    }
-                }
-                None => {
-                    // Request that someone else do it.
-                    self.inner.push(Node::RemoveListener {
-                        listener: entry,
-                        propagate: true,
-                    });
-                }
-            }
-        }
-    }
-}
-
-impl ListenerState {
-    fn take(&mut self) -> Self {
-        mem::replace(self, ListenerState::Discarded)
+        self.inner.remove(&mut self.state, true);
     }
 }
 
@@ -935,6 +829,9 @@ pub(crate) enum State {
 
     /// A task is polling it.
     Task(Task),
+
+    /// Empty hole used to replace a notified listener.
+    NotifiedTaken,
 }
 
 impl State {
@@ -942,7 +839,7 @@ impl State {
     #[inline]
     pub(crate) fn is_notified(&self) -> bool {
         match self {
-            State::Notified(_) => true,
+            State::Notified(_) | Self::NotifiedTaken => true,
             _ => false,
         }
     }

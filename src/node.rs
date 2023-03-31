@@ -1,6 +1,6 @@
 //! The node that makes up queues.
 
-use crate::list::{Entry, ListenerSlab};
+use crate::list::{Listener, ListenerSlab};
 use crate::sync::atomic::{AtomicUsize, Ordering};
 use crate::sync::Arc;
 use crate::{Notify, NotifyKind, State, Task};
@@ -24,7 +24,7 @@ pub(crate) enum Node {
     /// This node is removing a listener.
     RemoveListener {
         /// The ID of the listener to remove.
-        listener: NonZeroUsize,
+        listener: Listener,
 
         /// Whether to propagate notifications to the next listener.
         propagate: bool,
@@ -65,8 +65,7 @@ impl Node {
         match self {
             Node::AddListener { task_waiting } => {
                 // Add a new entry to the list.
-                let entry = Entry::new();
-                let key = list.insert(entry);
+                let key = list.insert(State::Created);
 
                 // Send the new key to the listener and wake it if necessary.
                 task_waiting.entry_id.store(key.get(), Ordering::Release);
@@ -84,12 +83,7 @@ impl Node {
                 propagate,
             } => {
                 // Remove the listener from the list.
-                let state = list.remove(listener);
-
-                if let (true, State::Notified(additional)) = (propagate, state) {
-                    // Propagate the notification to the next listener.
-                    list.notify(1, additional);
-                }
+                list.remove(listener, propagate);
             }
             Node::Waiting(task) => {
                 return Some(task);
