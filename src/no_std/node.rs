@@ -1,6 +1,6 @@
 //! The node that makes up queues.
 
-use super::{Listener, ListenerSlab};
+use super::ListenerSlab;
 use crate::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use crate::sync::Arc;
 use crate::{State, Task};
@@ -32,7 +32,7 @@ pub(crate) enum Node {
     /// This node is removing a listener.
     RemoveListener {
         /// The ID of the listener to remove.
-        listener: Listener,
+        key: NonZeroUsize,
 
         /// Whether to propagate notifications to the next listener.
         propagate: bool,
@@ -83,12 +83,9 @@ impl Node {
                 // Notify the listener.
                 list.notify(count, additional);
             }
-            Node::RemoveListener {
-                listener,
-                propagate,
-            } => {
+            Node::RemoveListener { key, propagate } => {
                 // Remove the listener from the list.
-                list.remove(listener, propagate);
+                list.remove(key, propagate);
             }
             Node::Waiting(task) => {
                 return Some(task);

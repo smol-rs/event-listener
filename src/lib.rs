@@ -179,7 +179,7 @@ impl Event {
         // Register the listener.
         let mut listener = EventListener(Listener {
             event: unsafe { Arc::clone(&ManuallyDrop::new(Arc::from_raw(inner))) },
-            listener: sys::Listener::Discarded,
+            listener: None,
         });
 
         listener.0.event.insert(&mut listener.0.listener);
@@ -510,10 +510,10 @@ impl EventListener {
     /// use event_listener::Event;
     ///
     /// let event = Event::new();
-    /// let mut listener = event.listen();
+    /// let listener = event.listen();
     ///
     /// // There are no notification so this times out.
-    /// assert!(!listener.as_mut().wait_deadline(Instant::now() + Duration::from_secs(1)));
+    /// assert!(!listener.wait_deadline(Instant::now() + Duration::from_secs(1)));
     /// ```
     #[cfg(feature = "std")]
     pub fn wait_deadline(self, deadline: Instant) -> bool {
@@ -601,7 +601,7 @@ struct Listener<B: Borrow<Inner> + Unpin> {
     event: B,
 
     /// The inner state of the listener.
-    listener: sys::Listener,
+    listener: Option<sys::Listener>,
 }
 
 unsafe impl<B: Borrow<Inner> + Unpin + Send> Send for Listener<B> {}

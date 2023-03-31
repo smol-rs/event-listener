@@ -33,8 +33,8 @@ impl crate::Inner {
     /// Add a new listener to the list.
     ///
     /// Does nothing if the list is already registered.
-    pub(crate) fn insert(&self, listener: &mut Listener) {
-        if let Listener::HasNode(_) | Listener::Queued(_) = *listener {
+    pub(crate) fn insert(&self, listener: &mut Option<Listener>) {
+        if listener.is_some() {
             // Already inserted.
             return;
         }
@@ -42,34 +42,34 @@ impl crate::Inner {
         match self.try_lock() {
             Some(mut lock) => {
                 let key = lock.insert(State::Created);
-                *listener = Listener::HasNode(key);
+                *listener = Some(Listener::HasNode(key));
             }
 
             None => {
                 // Push it to the queue.
                 let (node, task_waiting) = Node::listener();
                 self.list.queue.push(node);
-                *listener = Listener::Queued(task_waiting);
+                *listener = Some(Listener::Queued(task_waiting));
             }
         }
     }
 
     /// Remove a listener from the list.
-    pub(crate) fn remove(&self, listener: &mut Listener, propogate: bool) -> Option<State> {
-        let state = match mem::replace(listener, Listener::Discarded) {
-            Listener::HasNode(key) => {
+    pub(crate) fn remove(&self, listener: &mut Option<Listener>, propogate: bool) -> Option<State> {
+        let state = match listener.take() {
+            Some(Listener::HasNode(key)) => {
                 match self.try_lock() {
                     Some(mut list) => {
                         // Fast path removal.
-                        list.remove(Listener::HasNode(key), propogate)
+                        list.remove(key, propogate)
                     }
 
                     None => {
                         // Slow path removal.
                         // This is why intrusive lists don't work on no_std.
                         let node = Node::RemoveListener {
+                            key,
                             propagate: propogate,
-                            listener: Listener::HasNode(key),
                         };
 
                         self.list.queue.push(node);
@@ -79,12 +79,12 @@ impl crate::Inner {
                 }
             }
 
-            Listener::Queued(_) => {
+            Some(Listener::Queued(_)) => {
                 // This won't be added after we drop the lock.
                 None
             }
 
-            _ => None,
+            None => None,
         };
 
         state
@@ -115,11 +115,15 @@ impl crate::Inner {
     ///
     /// Returns `true` if the listener was already notified, and `false` otherwise. If the listener
     /// isn't inserted, returns `None`.
-    pub(crate) fn register(&self, listener: &mut Listener, task: TaskRef<'_>) -> Option<bool> {
+    pub(crate) fn register(
+        &self,
+        listener: &mut Option<Listener>,
+        task: TaskRef<'_>,
+    ) -> Option<bool> {
         loop {
-            match mem::replace(listener, Listener::Discarded) {
-                Listener::HasNode(key) => {
-                    *listener = Listener::HasNode(key);
+            match listener.take() {
+                Some(Listener::HasNode(key)) => {
+                    *listener = Some(Listener::HasNode(key));
                     match self.try_lock() {
                         Some(mut guard) => {
                             // Fast path registration.
@@ -135,18 +139,18 @@ impl crate::Inner {
                     }
                 }
 
-                Listener::Queued(task_waiting) => {
+                Some(Listener::Queued(task_waiting)) => {
                     // Are we done yet?
                     match task_waiting.status() {
                         Some(key) => {
                             // We're inserted now, adjust state.
-                            *listener = Listener::HasNode(key);
+                            *listener = Some(Listener::HasNode(key));
                         }
 
                         None => {
                             // We're still queued, so register the task.
                             task_waiting.register(task.into_task());
-                            *listener = Listener::Queued(task_waiting);
+                            *listener = Some(Listener::Queued(task_waiting));
                             return None;
                         }
                     }
@@ -476,12 +480,7 @@ impl ListenerSlab {
     }
 
     /// Removes an entry from the list and returns its state.
-    pub(crate) fn remove(&mut self, listener: Listener, propogate: bool) -> Option<State> {
-        let key = match listener {
-            Listener::HasNode(key) => key,
-            _ => return None,
-        };
-
+    pub(crate) fn remove(&mut self, key: NonZeroUsize, propogate: bool) -> Option<State> {
         let entry = &self.listeners[key.get()];
         let prev = entry.prev().get();
         let next = entry.next().get();
@@ -569,9 +568,13 @@ impl ListenerSlab {
     ///
     /// Returns `true` if the listener was already notified, and `false` otherwise. If the listener
     /// isn't inserted, returns `None`.
-    pub(crate) fn register(&mut self, listener: &mut Listener, task: TaskRef<'_>) -> Option<bool> {
+    pub(crate) fn register(
+        &mut self,
+        listener: &mut Option<Listener>,
+        task: TaskRef<'_>,
+    ) -> Option<bool> {
         let key = match *listener {
-            Listener::HasNode(key) => key,
+            Some(Listener::HasNode(key)) => key,
             _ => return None,
         };
 
@@ -581,7 +584,8 @@ impl ListenerSlab {
         match entry.state().replace(State::NotifiedTaken) {
             State::Notified(_) | State::NotifiedTaken => {
                 // The listener was already notified, so we don't need to do anything.
-                self.remove(mem::replace(listener, Listener::Discarded), false)?;
+                self.remove(key, false)?;
+                *listener = None;
                 Some(true)
             }
 
@@ -608,9 +612,6 @@ impl ListenerSlab {
 pub(crate) enum Listener {
     /// The listener has a node inside of the linked list.
     HasNode(NonZeroUsize),
-
-    /// The listener has already been notified and has discarded its entry.
-    Discarded,
 
     /// The listener has an entry in the queue that may or may not have a task waiting.
     Queued(Arc<TaskWaiting>),
