@@ -14,11 +14,12 @@ use crate::sync::cell::{Cell, UnsafeCell};
 use crate::sync::Arc;
 use crate::{State, Task, TaskRef};
 
+use core::fmt;
 use core::mem;
 use core::num::NonZeroUsize;
 use core::ops;
 
-use slab::Slab;
+use alloc::vec::Vec;
 
 impl crate::Inner {
     /// Locks the list.
@@ -248,21 +249,140 @@ impl Drop for ListGuard<'_> {
 }
 
 /// An entry representing a registered listener.
-pub(crate) struct Entry {
-    /// The state of this listener.
-    state: Cell<State>,
+enum Entry {
+    /// Contains the listener state.
+    Listener {
+        /// The state of the listener.
+        state: Cell<State>,
 
-    /// Previous entry in the linked list.
-    prev: Cell<Option<NonZeroUsize>>,
+        /// The previous listener in the list.
+        prev: Cell<Option<NonZeroUsize>>,
 
-    /// Next entry in the linked list.
-    next: Cell<Option<NonZeroUsize>>,
+        /// The next listener in the list.
+        next: Cell<Option<NonZeroUsize>>,
+    },
+
+    /// An empty slot that contains the index of the next empty slot.
+    Empty(NonZeroUsize),
+
+    /// Sentinel value.
+    Sentinel,
+}
+
+impl fmt::Debug for Entry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        struct TakenState<'a> {
+            state: Option<State>,
+            cell: &'a Cell<State>,
+        }
+
+        impl Drop for TakenState<'_> {
+            fn drop(&mut self) {
+                self.cell.set(self.state.take().unwrap());
+            }
+        }
+
+        impl fmt::Debug for TakenState<'_> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                fmt::Debug::fmt(self.state.as_ref().unwrap(), f)
+            }
+        }
+
+        match self {
+            Entry::Listener { state, next, prev } => {
+                let taken = TakenState {
+                    state: Some(state.replace(State::Created)),
+                    cell: state,
+                };
+
+                f.debug_struct("Listener")
+                    .field("state", &taken)
+                    .field("prev", prev)
+                    .field("next", next)
+                    .finish()
+            }
+            Entry::Empty(next) => f.debug_tuple("Empty").field(next).finish(),
+            Entry::Sentinel => f.debug_tuple("Sentinel").finish(),
+        }
+    }
+}
+
+impl PartialEq for Entry {
+    fn eq(&self, other: &Entry) -> bool {
+        struct RestoreState<'a> {
+            state: Option<State>,
+            cell: &'a Cell<State>,
+        }
+
+        impl Drop for RestoreState<'_> {
+            fn drop(&mut self) {
+                self.cell.set(self.state.take().unwrap());
+            }
+        }
+
+        match (self, other) {
+            (
+                Self::Listener {
+                    state: state1,
+                    prev: prev1,
+                    next: next1,
+                },
+                Self::Listener {
+                    state: state2,
+                    prev: prev2,
+                    next: next2,
+                },
+            ) => {
+                let taken1 = RestoreState {
+                    state: Some(state1.replace(State::Created)),
+                    cell: state1,
+                };
+
+                let taken2 = RestoreState {
+                    state: Some(state2.replace(State::Created)),
+                    cell: state2,
+                };
+
+                if taken1.state != taken2.state {
+                    return false;
+                }
+
+                prev1.get() == prev2.get() && next1.get() == next2.get()
+            }
+            (Self::Empty(next1), Self::Empty(next2)) => next1 == next2,
+            (Self::Sentinel, Self::Sentinel) => true,
+            _ => false,
+        }
+    }
+}
+
+impl Entry {
+    fn state(&self) -> &Cell<State> {
+        match self {
+            Entry::Listener { state, .. } => state,
+            _ => unreachable!(),
+        }
+    }
+
+    fn prev(&self) -> &Cell<Option<NonZeroUsize>> {
+        match self {
+            Entry::Listener { prev, .. } => prev,
+            _ => unreachable!(),
+        }
+    }
+
+    fn next(&self) -> &Cell<Option<NonZeroUsize>> {
+        match self {
+            Entry::Listener { next, .. } => next,
+            _ => unreachable!(),
+        }
+    }
 }
 
 /// A linked list of entries.
 pub(crate) struct ListenerSlab {
     /// The raw list of entries.
-    entries: Slab<Entry>,
+    listeners: Vec<Entry>,
 
     /// First entry in the list.
     head: Option<NonZeroUsize>,
@@ -275,61 +395,83 @@ pub(crate) struct ListenerSlab {
 
     /// The number of notified entries in the list.
     pub(crate) notified: usize,
+
+    /// The total number of listeners.
+    len: usize,
+
+    /// The index of the first `Empty` entry, or the length of the list plus one if there
+    /// are no empty entries.
+    first_empty: NonZeroUsize,
 }
 
 impl ListenerSlab {
     /// Create a new, empty list.
     pub(crate) fn new() -> Self {
-        // Create a Slab with a permanent entry occupying index 0, so that
-        // it is never used (and we can therefore use 0 as a sentinel value).
-        let mut entries = Slab::new();
-        entries.insert(Entry {
-            state: Cell::new(State::Created),
-            next: Cell::new(None),
-            prev: Cell::new(None),
-        });
-
         Self {
-            entries,
+            listeners: alloc::vec![Entry::Sentinel],
             head: None,
             tail: None,
             start: None,
             notified: 0,
+            len: 0,
+            first_empty: unsafe { NonZeroUsize::new_unchecked(1) },
         }
     }
 
     /// Get the number of entries in the list.
     pub(crate) fn len(&self) -> usize {
-        self.entries.len() - 1
+        self.listeners.len() - 1
     }
 
     /// Inserts a new entry into the list.
     pub(crate) fn insert(&mut self, state: State) -> NonZeroUsize {
-        let entry = Entry {
-            state: Cell::new(state),
-            next: Cell::new(None),
-            prev: Cell::new(None),
+        // Add the new entry into the list.
+        let key = {
+            let entry = Entry::Listener {
+                state: Cell::new(state),
+                prev: Cell::new(self.tail),
+                next: Cell::new(None),
+            };
+
+            let key = self.first_empty;
+            if self.first_empty.get() == self.listeners.len() {
+                // No empty entries, so add a new entry.
+                self.listeners.push(entry);
+
+                // SAFETY: Guaranteed to not overflow, since the Vec would have panicked already.
+                self.first_empty = unsafe { NonZeroUsize::new_unchecked(self.listeners.len()) };
+            } else {
+                // There is an empty entry, so replace it.
+                let slot = &mut self.listeners[key.get()];
+                let next = match mem::replace(slot, entry) {
+                    Entry::Empty(next) => next,
+                    _ => unreachable!(),
+                };
+
+                self.first_empty = next;
+            }
+
+            key
         };
 
         // Replace the tail with the new entry.
-        let key = NonZeroUsize::new(self.entries.vacant_key()).unwrap();
         match mem::replace(&mut self.tail, Some(key)) {
             None => self.head = Some(key),
-            Some(t) => {
-                self.entries[t.get()].next.set(Some(key));
-                entry.prev.set(Some(t));
+            Some(tail) => {
+                let tail = &self.listeners[tail.get()];
+                tail.next().set(Some(key));
             }
         }
 
-        // If there were no unnotified entries, this one is the first now.
+        // If there are no listeners that have been notified, then the new listener is the next
+        // listener to be notified.
         if self.start.is_none() {
-            self.start = self.tail;
+            self.start = Some(key);
         }
 
-        // Insert the entry into the slab.
-        self.entries.insert(entry);
+        // Increment the length.
+        self.len += 1;
 
-        // Return the key.
         key
     }
 
@@ -340,20 +482,20 @@ impl ListenerSlab {
             _ => return None,
         };
 
-        let entry = self.entries.remove(key.get());
-        let prev = entry.prev.get();
-        let next = entry.next.get();
+        let entry = self.listeners.remove(key.get());
+        let prev = entry.prev().get();
+        let next = entry.next().get();
 
         // Unlink from the previous entry.
         match prev {
             None => self.head = next,
-            Some(p) => self.entries[p.get()].next.set(next),
+            Some(p) => self.listeners[p.get()].next().set(next),
         }
 
         // Unlink from the next entry.
         match next {
             None => self.tail = prev,
-            Some(n) => self.entries[n.get()].prev.set(prev),
+            Some(n) => self.listeners[n.get()].prev().set(prev),
         }
 
         // If this was the first unnotified entry, move the pointer to the next one.
@@ -362,7 +504,16 @@ impl ListenerSlab {
         }
 
         // Extract the state.
-        let state = entry.state.replace(State::Created);
+        let entry = mem::replace(
+            &mut self.listeners[key.get()],
+            Entry::Empty(self.first_empty),
+        );
+        self.first_empty = key;
+
+        let state = match entry {
+            Entry::Listener { state, .. } => state.into_inner(),
+            _ => unreachable!(),
+        };
 
         // Update the counters.
         if state.is_notified() {
@@ -399,11 +550,11 @@ impl ListenerSlab {
 
                 Some(e) => {
                     // Get the entry and move the pointer forwards.
-                    let entry = &self.entries[e.get()];
-                    self.start = entry.next.get();
+                    let entry = &self.listeners[e.get()];
+                    self.start = entry.next().get();
 
                     // Set the state to `Notified` and notify.
-                    if let State::Task(task) = entry.state.replace(State::Notified(additional)) {
+                    if let State::Task(task) = entry.state().replace(State::Notified(additional)) {
                         task.wake();
                     }
 
@@ -424,10 +575,10 @@ impl ListenerSlab {
             _ => return None,
         };
 
-        let entry = &self.entries[key.get()];
+        let entry = &self.listeners[key.get()];
 
         // Take the state out and check it.
-        match entry.state.replace(State::NotifiedTaken) {
+        match entry.state().replace(State::NotifiedTaken) {
             State::Notified(_) | State::NotifiedTaken => {
                 // The listener was already notified, so we don't need to do anything.
                 self.remove(mem::replace(listener, Listener::Discarded), false)?;
@@ -437,9 +588,9 @@ impl ListenerSlab {
             State::Task(other_task) => {
                 // Only replace the task if it's not the same as the one we're registering.
                 if task.will_wake(other_task.as_task_ref()) {
-                    entry.state.set(State::Task(other_task));
+                    entry.state().set(State::Task(other_task));
                 } else {
-                    entry.state.set(State::Task(task.into_task()));
+                    entry.state().set(State::Task(task.into_task()));
                 }
 
                 Some(false)
@@ -447,7 +598,7 @@ impl ListenerSlab {
 
             _ => {
                 // Register the task.
-                entry.state.set(State::Task(task.into_task()));
+                entry.state().set(State::Task(task.into_task()));
                 Some(false)
             }
         }

@@ -92,6 +92,7 @@ use std::time::{Duration, Instant};
 use parking::Unparker;
 
 /// An asynchronous waker or thread unparker that can be used to notify a task or thread.
+#[derive(Debug)]
 enum Task {
     /// A waker that can be used to notify a task.
     Waker(Waker),
@@ -122,8 +123,14 @@ impl Task {
     }
 }
 
+impl PartialEq for Task {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_task_ref().will_wake(other.as_task_ref())
+    }
+}
+
 /// A reference to a task.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 enum TaskRef<'a> {
     /// A waker that wakes up a future.
     Waker(&'a Waker),
@@ -749,6 +756,7 @@ impl Drop for EventListener {
 }
 
 /// The state of a listener.
+#[derive(Debug, PartialEq)]
 pub(crate) enum State {
     /// It has just been created.
     Created,
