@@ -1,3 +1,4 @@
+use std::iter;
 use std::pin::Pin;
 
 use criterion::{criterion_group, criterion_main, Criterion};
@@ -8,10 +9,9 @@ const COUNT: usize = 8000;
 fn bench_events(c: &mut Criterion) {
     c.bench_function("notify_and_wait", |b| {
         let ev = Event::new();
-        let mut handles = Vec::with_capacity(COUNT);
-        for _ in 0..COUNT {
-            handles.push(EventListener::new(&ev));
-        }
+        let mut handles = iter::repeat_with(|| EventListener::new(&ev))
+            .take(COUNT)
+            .collect::<Vec<_>>();
 
         b.iter(|| {
             for handle in &mut handles {

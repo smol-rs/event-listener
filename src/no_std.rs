@@ -82,7 +82,7 @@ impl crate::Inner {
                         // Slow path removal.
                         // This is why intrusive lists don't work on no_std.
                         let node = Node::RemoveListener {
-                            key,
+                            listener: key,
                             propagate: propogate,
                         };
 
@@ -178,10 +178,10 @@ impl crate::Inner {
 
 pub(crate) struct List {
     /// The inner list.
-    pub(crate) inner: Mutex<ListenerSlab>,
+    inner: Mutex<ListenerSlab>,
 
     /// The queue of pending operations.
-    pub(crate) queue: Queue,
+    queue: Queue,
 }
 
 impl List {
@@ -240,7 +240,7 @@ impl Drop for ListGuard<'_> {
         let mut list = guard.take().unwrap();
 
         // Tasks to wakeup after releasing the lock.
-        let mut tasks = vec![];
+        let mut tasks = alloc::vec![];
 
         // Process every node left in the queue.
         if let Some(start_node) = inner.list.queue.pop() {
@@ -623,12 +623,23 @@ impl ListenerSlab {
     }
 }
 
+#[derive(Debug)]
 pub(crate) enum Listener {
     /// The listener has a node inside of the linked list.
     HasNode(NonZeroUsize),
 
     /// The listener has an entry in the queue that may or may not have a task waiting.
     Queued(Arc<TaskWaiting>),
+}
+
+impl PartialEq for Listener {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::HasNode(a), Self::HasNode(b)) => a == b,
+            (Self::Queued(a), Self::Queued(b)) => Arc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
 }
 
 /// A simple mutex type that optimistically assumes that the lock is uncontended.
@@ -752,7 +763,7 @@ mod tests {
         assert_eq!(listeners.notified, 0);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key1));
-        assert_eq!(listeners.next, Some(key1));
+        assert_eq!(listeners.start, Some(key1));
         assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -787,7 +798,7 @@ mod tests {
         assert_eq!(listeners.notified, 0);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key1));
-        assert_eq!(listeners.next, Some(key1));
+        assert_eq!(listeners.start, Some(key1));
         assert_eq!(listeners.first_empty, NonZeroUsize::new(2).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -828,7 +839,7 @@ mod tests {
         assert_eq!(listeners.notified, 1);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key1));
-        assert_eq!(listeners.next, Some(key2));
+        assert_eq!(listeners.start, Some(key2));
         assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -863,7 +874,7 @@ mod tests {
         assert_eq!(listeners.notified, 0);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key2));
-        assert_eq!(listeners.next, Some(key2));
+        assert_eq!(listeners.start, Some(key2));
         assert_eq!(listeners.first_empty, NonZeroUsize::new(1).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -906,7 +917,7 @@ mod tests {
         // Register one.
         assert_eq!(
             listeners.register(
-                Pin::new(&mut Some(Listener::Inserted(key2))),
+                Pin::new(&mut Some(Listener::HasNode(key2))),
                 TaskRef::Waker(&waker)
             ),
             Some(false)
@@ -916,7 +927,7 @@ mod tests {
         assert_eq!(listeners.notified, 0);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key1));
-        assert_eq!(listeners.next, Some(key1));
+        assert_eq!(listeners.start, Some(key1));
         assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -951,7 +962,7 @@ mod tests {
         assert_eq!(listeners.notified, 2);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key1));
-        assert_eq!(listeners.next, Some(key3));
+        assert_eq!(listeners.start, Some(key3));
         assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -982,7 +993,7 @@ mod tests {
         assert!(woken.load(Ordering::SeqCst));
         assert_eq!(
             listeners.register(
-                Pin::new(&mut Some(Listener::Inserted(key2))),
+                Pin::new(&mut Some(Listener::HasNode(key2))),
                 TaskRef::Waker(&waker)
             ),
             Some(true)
@@ -1007,7 +1018,7 @@ mod tests {
         // Register one.
         assert_eq!(
             listeners.register(
-                Pin::new(&mut Some(Listener::Inserted(key2))),
+                Pin::new(&mut Some(Listener::HasNode(key2))),
                 TaskRef::Waker(&waker)
             ),
             Some(false)
@@ -1017,7 +1028,7 @@ mod tests {
         assert_eq!(listeners.notified, 0);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key1));
-        assert_eq!(listeners.next, Some(key1));
+        assert_eq!(listeners.start, Some(key1));
         assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -1052,7 +1063,7 @@ mod tests {
         assert_eq!(listeners.notified, 1);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key1));
-        assert_eq!(listeners.next, Some(key2));
+        assert_eq!(listeners.start, Some(key2));
         assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -1087,7 +1098,7 @@ mod tests {
         assert_eq!(listeners.notified, 1);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key1));
-        assert_eq!(listeners.next, Some(key2));
+        assert_eq!(listeners.start, Some(key2));
         assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -1122,7 +1133,7 @@ mod tests {
         assert_eq!(listeners.notified, 0);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key2));
-        assert_eq!(listeners.next, Some(key2));
+        assert_eq!(listeners.start, Some(key2));
         assert_eq!(listeners.first_empty, NonZeroUsize::new(1).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -1154,7 +1165,7 @@ mod tests {
         assert_eq!(listeners.notified, 1);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key2));
-        assert_eq!(listeners.next, Some(key3));
+        assert_eq!(listeners.start, Some(key3));
         assert_eq!(listeners.first_empty, NonZeroUsize::new(1).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -1186,7 +1197,7 @@ mod tests {
         assert_eq!(listeners.notified, 1);
         assert_eq!(listeners.tail, Some(key3));
         assert_eq!(listeners.head, Some(key3));
-        assert_eq!(listeners.next, None);
+        assert_eq!(listeners.start, None);
         assert_eq!(listeners.first_empty, NonZeroUsize::new(2).unwrap());
         assert_eq!(listeners.listeners[0], Entry::Sentinel);
         assert_eq!(
@@ -1222,11 +1233,11 @@ mod tests {
 
         assert_eq!(
             listener1,
-            Some(Listener::Inserted(NonZeroUsize::new(1).unwrap()))
+            Some(Listener::HasNode(NonZeroUsize::new(1).unwrap()))
         );
         assert_eq!(
             listener2,
-            Some(Listener::Inserted(NonZeroUsize::new(2).unwrap()))
+            Some(Listener::HasNode(NonZeroUsize::new(2).unwrap()))
         );
 
         // Register a waker in the second listener.
