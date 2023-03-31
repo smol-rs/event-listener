@@ -715,3 +715,565 @@ impl<'a, T> ops::DerefMut for MutexGuard<'a, T> {
 
 unsafe impl<T: Send> Send for Mutex<T> {}
 unsafe impl<T: Send> Sync for Mutex<T> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Task;
+
+    #[test]
+    fn smoke_mutex() {
+        let mutex = Mutex::new(0);
+
+        {
+            let mut guard = mutex.try_lock().unwrap();
+            *guard += 1;
+        }
+
+        {
+            let mut guard = mutex.try_lock().unwrap();
+            *guard += 1;
+        }
+
+        let guard = mutex.try_lock().unwrap();
+        assert_eq!(*guard, 2);
+    }
+
+    #[test]
+    fn smoke_listener_slab() {
+        let mut listeners = ListenerSlab::new();
+
+        // Insert a few listeners.
+        let key1 = listeners.insert(State::Created);
+        let key2 = listeners.insert(State::Created);
+        let key3 = listeners.insert(State::Created);
+
+        assert_eq!(listeners.len, 3);
+        assert_eq!(listeners.notified, 0);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key1));
+        assert_eq!(listeners.next, Some(key1));
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(None),
+                next: Cell::new(Some(key2)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key1)),
+                next: Cell::new(Some(key3)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key2)),
+                next: Cell::new(None),
+            }
+        );
+
+        // Remove one.
+        assert_eq!(listeners.remove(key2, false), Some(State::Created));
+
+        assert_eq!(listeners.len, 2);
+        assert_eq!(listeners.notified, 0);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key1));
+        assert_eq!(listeners.next, Some(key1));
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(2).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(None),
+                next: Cell::new(Some(key3)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Empty(NonZeroUsize::new(4).unwrap())
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key1)),
+                next: Cell::new(None),
+            }
+        );
+    }
+
+    #[test]
+    fn listener_slab_notify() {
+        let mut listeners = ListenerSlab::new();
+
+        // Insert a few listeners.
+        let key1 = listeners.insert(State::Created);
+        let key2 = listeners.insert(State::Created);
+        let key3 = listeners.insert(State::Created);
+
+        // Notify one.
+        listeners.notify(1, true);
+
+        assert_eq!(listeners.len, 3);
+        assert_eq!(listeners.notified, 1);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key1));
+        assert_eq!(listeners.next, Some(key2));
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Listener {
+                state: Cell::new(State::Notified(true)),
+                prev: Cell::new(None),
+                next: Cell::new(Some(key2)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key1)),
+                next: Cell::new(Some(key3)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key2)),
+                next: Cell::new(None),
+            }
+        );
+
+        // Remove the notified listener.
+        assert_eq!(listeners.remove(key1, false), Some(State::Notified(true)));
+
+        assert_eq!(listeners.len, 2);
+        assert_eq!(listeners.notified, 0);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key2));
+        assert_eq!(listeners.next, Some(key2));
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(1).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Empty(NonZeroUsize::new(4).unwrap())
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(None),
+                next: Cell::new(Some(key3)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key2)),
+                next: Cell::new(None),
+            }
+        );
+    }
+
+    #[test]
+    fn listener_slab_register() {
+        let woken = Arc::new(AtomicBool::new(false));
+        let waker = waker_fn::waker_fn({
+            let woken = woken.clone();
+            move || woken.store(true, Ordering::SeqCst)
+        });
+
+        let mut listeners = ListenerSlab::new();
+
+        // Insert a few listeners.
+        let key1 = listeners.insert(State::Created);
+        let key2 = listeners.insert(State::Created);
+        let key3 = listeners.insert(State::Created);
+
+        // Register one.
+        assert_eq!(
+            listeners.register(
+                Pin::new(&mut Some(Listener::Inserted(key2))),
+                TaskRef::Waker(&waker)
+            ),
+            Some(false)
+        );
+
+        assert_eq!(listeners.len, 3);
+        assert_eq!(listeners.notified, 0);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key1));
+        assert_eq!(listeners.next, Some(key1));
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(None),
+                next: Cell::new(Some(key2)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Listener {
+                state: Cell::new(State::Task(Task::Waker(waker.clone()))),
+                prev: Cell::new(Some(key1)),
+                next: Cell::new(Some(key3)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key2)),
+                next: Cell::new(None),
+            }
+        );
+
+        // Notify the listener.
+        listeners.notify(2, false);
+
+        assert_eq!(listeners.len, 3);
+        assert_eq!(listeners.notified, 2);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key1));
+        assert_eq!(listeners.next, Some(key3));
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Listener {
+                state: Cell::new(State::Notified(false)),
+                prev: Cell::new(None),
+                next: Cell::new(Some(key2)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Listener {
+                state: Cell::new(State::Notified(false)),
+                prev: Cell::new(Some(key1)),
+                next: Cell::new(Some(key3)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key2)),
+                next: Cell::new(None),
+            }
+        );
+
+        assert!(woken.load(Ordering::SeqCst));
+        assert_eq!(
+            listeners.register(
+                Pin::new(&mut Some(Listener::Inserted(key2))),
+                TaskRef::Waker(&waker)
+            ),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn listener_slab_notify_prop() {
+        let woken = Arc::new(AtomicBool::new(false));
+        let waker = waker_fn::waker_fn({
+            let woken = woken.clone();
+            move || woken.store(true, Ordering::SeqCst)
+        });
+
+        let mut listeners = ListenerSlab::new();
+
+        // Insert a few listeners.
+        let key1 = listeners.insert(State::Created);
+        let key2 = listeners.insert(State::Created);
+        let key3 = listeners.insert(State::Created);
+
+        // Register one.
+        assert_eq!(
+            listeners.register(
+                Pin::new(&mut Some(Listener::Inserted(key2))),
+                TaskRef::Waker(&waker)
+            ),
+            Some(false)
+        );
+
+        assert_eq!(listeners.len, 3);
+        assert_eq!(listeners.notified, 0);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key1));
+        assert_eq!(listeners.next, Some(key1));
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(None),
+                next: Cell::new(Some(key2)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Listener {
+                state: Cell::new(State::Task(Task::Waker(waker.clone()))),
+                prev: Cell::new(Some(key1)),
+                next: Cell::new(Some(key3)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key2)),
+                next: Cell::new(None),
+            }
+        );
+
+        // Notify the first listener.
+        listeners.notify(1, false);
+
+        assert_eq!(listeners.len, 3);
+        assert_eq!(listeners.notified, 1);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key1));
+        assert_eq!(listeners.next, Some(key2));
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Listener {
+                state: Cell::new(State::Notified(false)),
+                prev: Cell::new(None),
+                next: Cell::new(Some(key2)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Listener {
+                state: Cell::new(State::Task(Task::Waker(waker.clone()))),
+                prev: Cell::new(Some(key1)),
+                next: Cell::new(Some(key3)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key2)),
+                next: Cell::new(None),
+            }
+        );
+
+        // Calling notify again should not change anything.
+        listeners.notify(1, false);
+
+        assert_eq!(listeners.len, 3);
+        assert_eq!(listeners.notified, 1);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key1));
+        assert_eq!(listeners.next, Some(key2));
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(4).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Listener {
+                state: Cell::new(State::Notified(false)),
+                prev: Cell::new(None),
+                next: Cell::new(Some(key2)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Listener {
+                state: Cell::new(State::Task(Task::Waker(waker.clone()))),
+                prev: Cell::new(Some(key1)),
+                next: Cell::new(Some(key3)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key2)),
+                next: Cell::new(None),
+            }
+        );
+
+        // Remove the first listener.
+        assert_eq!(listeners.remove(key1, false), Some(State::Notified(false)));
+
+        assert_eq!(listeners.len, 2);
+        assert_eq!(listeners.notified, 0);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key2));
+        assert_eq!(listeners.next, Some(key2));
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(1).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Empty(NonZeroUsize::new(4).unwrap())
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Listener {
+                state: Cell::new(State::Task(Task::Waker(waker))),
+                prev: Cell::new(None),
+                next: Cell::new(Some(key3)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key2)),
+                next: Cell::new(None),
+            }
+        );
+
+        // Notify the second listener.
+        listeners.notify(1, false);
+        assert!(woken.load(Ordering::SeqCst));
+
+        assert_eq!(listeners.len, 2);
+        assert_eq!(listeners.notified, 1);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key2));
+        assert_eq!(listeners.next, Some(key3));
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(1).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Empty(NonZeroUsize::new(4).unwrap())
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Listener {
+                state: Cell::new(State::Notified(false)),
+                prev: Cell::new(None),
+                next: Cell::new(Some(key3)),
+            }
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Created),
+                prev: Cell::new(Some(key2)),
+                next: Cell::new(None),
+            }
+        );
+
+        // Remove and propogate the second listener.
+        assert_eq!(listeners.remove(key2, true), Some(State::Notified(false)));
+
+        // The third listener should be notified.
+        assert_eq!(listeners.len, 1);
+        assert_eq!(listeners.notified, 1);
+        assert_eq!(listeners.tail, Some(key3));
+        assert_eq!(listeners.head, Some(key3));
+        assert_eq!(listeners.next, None);
+        assert_eq!(listeners.first_empty, NonZeroUsize::new(2).unwrap());
+        assert_eq!(listeners.listeners[0], Entry::Sentinel);
+        assert_eq!(
+            listeners.listeners[1],
+            Entry::Empty(NonZeroUsize::new(4).unwrap())
+        );
+        assert_eq!(
+            listeners.listeners[2],
+            Entry::Empty(NonZeroUsize::new(1).unwrap())
+        );
+        assert_eq!(
+            listeners.listeners[3],
+            Entry::Listener {
+                state: Cell::new(State::Notified(false)),
+                prev: Cell::new(None),
+                next: Cell::new(None),
+            }
+        );
+
+        // Remove the third listener.
+        assert_eq!(listeners.remove(key3, false), Some(State::Notified(false)));
+    }
+
+    #[test]
+    fn uncontended_inner() {
+        let inner = crate::Inner::new();
+
+        // Register two listeners.
+        let (mut listener1, mut listener2, mut listener3) = (None, None, None);
+        inner.insert(Pin::new(&mut listener1));
+        inner.insert(Pin::new(&mut listener2));
+        inner.insert(Pin::new(&mut listener3));
+
+        assert_eq!(
+            listener1,
+            Some(Listener::Inserted(NonZeroUsize::new(1).unwrap()))
+        );
+        assert_eq!(
+            listener2,
+            Some(Listener::Inserted(NonZeroUsize::new(2).unwrap()))
+        );
+
+        // Register a waker in the second listener.
+        let woken = Arc::new(AtomicBool::new(false));
+        let waker = waker_fn::waker_fn({
+            let woken = woken.clone();
+            move || woken.store(true, Ordering::SeqCst)
+        });
+        assert_eq!(
+            inner.register(Pin::new(&mut listener2), TaskRef::Waker(&waker)),
+            Some(false)
+        );
+
+        // Notify the first listener.
+        inner.notify(1, false);
+        assert!(!woken.load(Ordering::SeqCst));
+
+        // Another notify should do nothing.
+        inner.notify(1, false);
+        assert!(!woken.load(Ordering::SeqCst));
+
+        // Receive the notification.
+        assert_eq!(
+            inner.register(Pin::new(&mut listener1), TaskRef::Waker(&waker)),
+            Some(true)
+        );
+
+        // First listener is already removed.
+        assert!(listener1.is_none());
+
+        // Notify the second listener.
+        inner.notify(1, false);
+        assert!(woken.load(Ordering::SeqCst));
+
+        // Remove the second listener and propogate the notification.
+        assert_eq!(
+            inner.remove(Pin::new(&mut listener2), true),
+            Some(State::Notified(false))
+        );
+
+        // Second listener is already removed.
+        assert!(listener2.is_none());
+
+        // Third listener should be notified.
+        assert_eq!(
+            inner.register(Pin::new(&mut listener3), TaskRef::Waker(&waker)),
+            Some(true)
+        );
+    }
+}
