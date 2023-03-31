@@ -15,8 +15,8 @@ fn bench_events(c: &mut Criterion) {
 
             ev.notify(COUNT);
 
-            for handle in handles {
-                handle.wait();
+            for mut handle in handles {
+                handle.as_mut().wait();
             }
         });
     });

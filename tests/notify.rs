@@ -7,7 +7,7 @@ use std::usize;
 use event_listener::{Event, EventListener};
 use waker_fn::waker_fn;
 
-fn is_notified(listener: &mut EventListener) -> bool {
+fn is_notified(listener: &mut Pin<Box<EventListener>>) -> bool {
     let waker = waker_fn(|| ());
     Pin::new(listener)
         .poll(&mut Context::from_waker(&waker))

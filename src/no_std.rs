@@ -18,6 +18,7 @@ use core::fmt;
 use core::mem;
 use core::num::NonZeroUsize;
 use core::ops;
+use core::pin::Pin;
 
 use alloc::vec::Vec;
 
@@ -33,8 +34,8 @@ impl crate::Inner {
     /// Add a new listener to the list.
     ///
     /// Does nothing if the list is already registered.
-    pub(crate) fn insert(&self, listener: &mut Option<Listener>) {
-        if listener.is_some() {
+    pub(crate) fn insert(&self, mut listener: Pin<&mut Option<Listener>>) {
+        if listener.as_ref().as_pin_ref().is_some() {
             // Already inserted.
             return;
         }
@@ -55,8 +56,12 @@ impl crate::Inner {
     }
 
     /// Remove a listener from the list.
-    pub(crate) fn remove(&self, listener: &mut Option<Listener>, propogate: bool) -> Option<State> {
-        let state = match listener.take() {
+    pub(crate) fn remove(
+        &self,
+        mut listener: Pin<&mut Option<Listener>>,
+        propogate: bool,
+    ) -> Option<State> {
+        let state = match listener.as_mut().take() {
             Some(Listener::HasNode(key)) => {
                 match self.try_lock() {
                     Some(mut list) => {
@@ -117,11 +122,11 @@ impl crate::Inner {
     /// isn't inserted, returns `None`.
     pub(crate) fn register(
         &self,
-        listener: &mut Option<Listener>,
+        mut listener: Pin<&mut Option<Listener>>,
         task: TaskRef<'_>,
     ) -> Option<bool> {
         loop {
-            match listener.take() {
+            match listener.as_mut().take() {
                 Some(Listener::HasNode(key)) => {
                     *listener = Some(Listener::HasNode(key));
                     match self.try_lock() {
@@ -570,7 +575,7 @@ impl ListenerSlab {
     /// isn't inserted, returns `None`.
     pub(crate) fn register(
         &mut self,
-        listener: &mut Option<Listener>,
+        mut listener: Pin<&mut Option<Listener>>,
         task: TaskRef<'_>,
     ) -> Option<bool> {
         let key = match *listener {
