@@ -1,6 +1,6 @@
 //! The queue of nodes that keeps track of pending operations.
 
-use crate::node::Node;
+use super::node::Node;
 use crate::sync::atomic::{AtomicPtr, Ordering};
 
 use crossbeam_utils::CachePadded;

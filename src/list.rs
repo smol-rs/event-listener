@@ -1,7 +1,14 @@
 //! The inner list of listeners.
 
-use crate::node::{Node, TaskWaiting};
-use crate::queue::Queue;
+#[path = "list/node.rs"]
+mod node;
+
+#[path = "list/queue.rs"]
+mod queue;
+
+use node::{Node, TaskWaiting};
+use queue::Queue;
+
 use crate::sync::atomic::{AtomicBool, Ordering};
 use crate::sync::cell::{Cell, UnsafeCell};
 use crate::sync::Arc;
@@ -15,7 +22,7 @@ use slab::Slab;
 
 impl crate::Inner {
     /// Locks the list.
-    fn lock(&self) -> Option<ListGuard<'_>> {
+    fn try_lock(&self) -> Option<ListGuard<'_>> {
         self.list.inner.try_lock().map(|guard| ListGuard {
             inner: self,
             guard: Some(guard),
@@ -31,7 +38,7 @@ impl crate::Inner {
             return;
         }
 
-        match self.lock() {
+        match self.try_lock() {
             Some(mut lock) => {
                 let key = lock.insert(State::Created);
                 *listener = Listener::HasNode(key);
@@ -50,7 +57,7 @@ impl crate::Inner {
     pub(crate) fn remove(&self, listener: &mut Listener, propogate: bool) -> Option<State> {
         let state = match mem::replace(listener, Listener::Discarded) {
             Listener::HasNode(key) => {
-                match self.lock() {
+                match self.try_lock() {
                     Some(mut list) => {
                         // Fast path removal.
                         list.remove(Listener::HasNode(key), propogate)
@@ -85,7 +92,7 @@ impl crate::Inner {
     /// Notifies a number of entries.
     #[cold]
     pub(crate) fn notify(&self, n: usize, additional: bool) {
-        match self.lock() {
+        match self.try_lock() {
             Some(mut guard) => {
                 // Notify the listeners.
                 guard.notify(n, additional);
@@ -112,7 +119,7 @@ impl crate::Inner {
             match mem::replace(listener, Listener::Discarded) {
                 Listener::HasNode(key) => {
                     *listener = Listener::HasNode(key);
-                    match self.lock() {
+                    match self.try_lock() {
                         Some(mut guard) => {
                             // Fast path registration.
                             return guard.register(listener, task);

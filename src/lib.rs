@@ -69,8 +69,6 @@ extern crate alloc;
 extern crate std;
 
 mod list;
-mod node;
-mod queue;
 mod sync;
 
 use alloc::sync::Arc;
