@@ -68,8 +68,8 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std;
 
-mod list;
-mod sync;
+#[path = "no_std.rs"]
+mod sys;
 
 use alloc::sync::Arc;
 
@@ -88,83 +88,6 @@ use std::panic::{RefUnwindSafe, UnwindSafe};
 #[cfg(feature = "std")]
 use std::time::{Duration, Instant};
 
-#[cfg(feature = "std")]
-use parking::Unparker;
-
-/// An asynchronous waker or thread unparker that can be used to notify a task or thread.
-#[derive(Debug)]
-enum Task {
-    /// A waker that can be used to notify a task.
-    Waker(Waker),
-
-    /// An unparker that can be used to notify a thread.
-    #[cfg(feature = "std")]
-    Thread(Unparker),
-}
-
-impl Task {
-    fn as_task_ref(&self) -> TaskRef<'_> {
-        match self {
-            Self::Waker(waker) => TaskRef::Waker(waker),
-            #[cfg(feature = "std")]
-            Self::Thread(unparker) => TaskRef::Unparker(unparker),
-        }
-    }
-
-    /// Notifies the task or thread.
-    fn wake(self) {
-        match self {
-            Task::Waker(waker) => waker.wake(),
-            #[cfg(feature = "std")]
-            Task::Thread(unparker) => {
-                unparker.unpark();
-            }
-        }
-    }
-}
-
-impl PartialEq for Task {
-    fn eq(&self, other: &Self) -> bool {
-        self.as_task_ref().will_wake(other.as_task_ref())
-    }
-}
-
-/// A reference to a task.
-#[derive(Debug, Clone, Copy)]
-enum TaskRef<'a> {
-    /// A waker that wakes up a future.
-    Waker(&'a Waker),
-
-    /// An unparker that wakes up a thread.
-    #[cfg(feature = "std")]
-    Unparker(&'a parking::Unparker),
-}
-
-impl TaskRef<'_> {
-    /// Tells if this task will wake up the other task.
-    fn will_wake(self, other: Self) -> bool {
-        match (self, other) {
-            (Self::Waker(a), Self::Waker(b)) => a.will_wake(b),
-            #[cfg(feature = "std")]
-            (Self::Unparker(_), Self::Unparker(_)) => {
-                // TODO: Use unreleased will_unpark API.
-                false
-            }
-            #[cfg(feature = "std")]
-            _ => false,
-        }
-    }
-
-    /// Converts this task reference to a task by cloning.
-    fn into_task(self) -> Task {
-        match self {
-            Self::Waker(waker) => Task::Waker(waker.clone()),
-            #[cfg(feature = "std")]
-            Self::Unparker(unparker) => Task::Thread(unparker.clone()),
-        }
-    }
-}
-
 /// Inner state of [`Event`].
 struct Inner {
     /// The number of notified entries, or `usize::MAX` if all of them have been notified.
@@ -173,7 +96,7 @@ struct Inner {
     notified: AtomicUsize,
 
     /// Inner queue of event listeners.
-    list: list::List,
+    list: sys::List,
 }
 
 impl Inner {
@@ -181,7 +104,7 @@ impl Inner {
     fn new() -> Self {
         Self {
             notified: AtomicUsize::new(core::usize::MAX),
-            list: list::List::new(),
+            list: sys::List::new(),
         }
     }
 }
@@ -255,7 +178,7 @@ impl Event {
         // Register the listener.
         let mut listener = EventListener {
             inner: unsafe { Arc::clone(&ManuallyDrop::new(Arc::from_raw(inner))) },
-            state: list::Listener::Discarded,
+            state: sys::Listener::Discarded,
         };
 
         listener.inner.insert(&mut listener.state);
@@ -525,7 +448,7 @@ pub struct EventListener {
     inner: Arc<Inner>,
 
     /// The current state of the listener.
-    state: list::Listener,
+    state: sys::Listener,
 }
 
 #[cfg(feature = "std")]
@@ -784,6 +707,80 @@ impl State {
     }
 }
 
+/// An asynchronous waker or thread unparker that can be used to notify a task or thread.
+#[derive(Debug)]
+enum Task {
+    /// A waker that can be used to notify a task.
+    Waker(Waker),
+
+    /// An unparker that can be used to notify a thread.
+    #[cfg(feature = "std")]
+    Unparker(parking::Unparker),
+}
+
+impl Task {
+    fn as_task_ref(&self) -> TaskRef<'_> {
+        match self {
+            Self::Waker(waker) => TaskRef::Waker(waker),
+            #[cfg(feature = "std")]
+            Self::Unparker(unparker) => TaskRef::Unparker(unparker),
+        }
+    }
+
+    /// Notifies the task or thread.
+    fn wake(self) {
+        match self {
+            Task::Waker(waker) => waker.wake(),
+            #[cfg(feature = "std")]
+            Task::Unparker(unparker) => {
+                unparker.unpark();
+            }
+        }
+    }
+}
+
+impl PartialEq for Task {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_task_ref().will_wake(other.as_task_ref())
+    }
+}
+
+/// A reference to a task.
+#[derive(Debug, Clone, Copy)]
+enum TaskRef<'a> {
+    /// A waker that wakes up a future.
+    Waker(&'a Waker),
+
+    /// An unparker that wakes up a thread.
+    #[cfg(feature = "std")]
+    Unparker(&'a parking::Unparker),
+}
+
+impl TaskRef<'_> {
+    /// Tells if this task will wake up the other task.
+    fn will_wake(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Waker(a), Self::Waker(b)) => a.will_wake(b),
+            #[cfg(feature = "std")]
+            (Self::Unparker(_), Self::Unparker(_)) => {
+                // TODO: Use unreleased will_unpark API.
+                false
+            }
+            #[cfg(feature = "std")]
+            _ => false,
+        }
+    }
+
+    /// Converts this task reference to a task by cloning.
+    fn into_task(self) -> Task {
+        match self {
+            Self::Waker(waker) => Task::Waker(waker.clone()),
+            #[cfg(feature = "std")]
+            Self::Unparker(unparker) => Task::Unparker(unparker.clone()),
+        }
+    }
+}
+
 /// Equivalent to `atomic::fence(Ordering::SeqCst)`, but in some cases faster.
 #[inline]
 fn full_fence() {
@@ -809,5 +806,32 @@ fn full_fence() {
         atomic::compiler_fence(Ordering::SeqCst);
     } else {
         atomic::fence(Ordering::SeqCst);
+    }
+}
+
+/// Synchronization primitive implementation.
+mod sync {
+    pub(super) use alloc::sync::Arc;
+    pub(super) use core::cell;
+    pub(super) use core::sync::atomic;
+
+    pub(super) trait WithMut {
+        type Output;
+
+        fn with_mut<F, R>(&mut self, f: F) -> R
+        where
+            F: FnOnce(&mut Self::Output) -> R;
+    }
+
+    impl<T> WithMut for atomic::AtomicPtr<T> {
+        type Output = *mut T;
+
+        #[inline]
+        fn with_mut<F, R>(&mut self, f: F) -> R
+        where
+            F: FnOnce(&mut Self::Output) -> R,
+        {
+            f(self.get_mut())
+        }
     }
 }

@@ -1,6 +1,6 @@
 //! The node that makes up queues.
 
-use crate::list::{Listener, ListenerSlab};
+use super::{Listener, ListenerSlab};
 use crate::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use crate::sync::Arc;
 use crate::{State, Task};

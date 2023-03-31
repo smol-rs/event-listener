@@ -1,9 +1,9 @@
 //! The inner list of listeners.
 
-#[path = "list/node.rs"]
+#[path = "no_std/node.rs"]
 mod node;
 
-#[path = "list/queue.rs"]
+#[path = "no_std/queue.rs"]
 mod queue;
 
 use node::{Node, TaskWaiting};
