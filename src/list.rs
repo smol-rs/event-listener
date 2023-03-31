@@ -74,6 +74,27 @@ impl crate::Inner {
         state
     }
 
+    /// Notifies a number of entries.
+    #[cold]
+    pub(crate) fn notify(&self, n: usize, additional: bool) {
+        match self.lock() {
+            Some(mut guard) => {
+                // Notify the listeners.
+                guard.notify(n, additional);
+            }
+
+            None => {
+                // Push it to the queue.
+                let node = Node::Notify {
+                    count: n,
+                    additional,
+                };
+
+                self.list.queue.push(node);
+            }
+        }
+    }
+
     /// Register a task to be notified when the event is triggered.
     ///
     /// Returns `true` if the listener was already notified, and `false` otherwise. If the listener
@@ -247,7 +268,11 @@ impl ListenerSlab {
         // Create a Slab with a permanent entry occupying index 0, so that
         // it is never used (and we can therefore use 0 as a sentinel value).
         let mut entries = Slab::new();
-        entries.insert(Entry::new());
+        entries.insert(Entry {
+            state: Cell::new(State::Created),
+            next: Cell::new(None),
+            prev: Cell::new(None),
+        });
 
         Self {
             entries,
@@ -339,64 +364,36 @@ impl ListenerSlab {
         Some(state)
     }
 
-    /// Notifies a number of entries, either normally or as an additional notification.
+    /// Notifies a number of listeners.
     #[cold]
-    pub(crate) fn notify(&mut self, count: usize, additional: bool) {
-        if additional {
-            self.notify_additional(count);
-        } else {
-            self.notify_unnotified(count);
-        }
-    }
-
-    /// Notifies a number of entries.
-    #[cold]
-    pub(crate) fn notify_unnotified(&mut self, mut n: usize) {
-        if n <= self.notified {
-            return;
-        }
-        n -= self.notified;
-
-        while n > 0 {
-            n -= 1;
-
-            // Notify the first unnotified entry.
-            match self.start {
-                None => break,
-                Some(e) => {
-                    // Get the entry and move the pointer forward.
-                    let e = &self.entries[e.get()];
-                    self.start = e.next.get();
-
-                    // Set the state of this entry to `Notified` and notify.
-                    let was_notified = e.notify(false);
-
-                    // Update the counter.
-                    self.notified += was_notified as usize;
-                }
+    pub(crate) fn notify(&mut self, mut n: usize, additional: bool) {
+        if !additional {
+            // Make sure we're not notifying more than we have.
+            if n <= self.notified {
+                return;
             }
+            n -= self.notified;
         }
-    }
 
-    /// Notifies a number of additional entries.
-    #[cold]
-    pub(crate) fn notify_additional(&mut self, mut n: usize) {
         while n > 0 {
             n -= 1;
 
-            // Notify the first unnotified entry.
+            // Notify the next entry.
             match self.start {
                 None => break,
+
                 Some(e) => {
-                    // Get the entry and move the pointer forward.
-                    let e = &self.entries[e.get()];
-                    self.start = e.next.get();
+                    // Get the entry and move the pointer forwards.
+                    let entry = &self.entries[e.get()];
+                    self.start = entry.next.get();
 
-                    // Set the state of this entry to `Notified` and notify.
-                    let was_notified = e.notify(true);
+                    // Set the state to `Notified` and notify.
+                    if let State::Task(task) = entry.state.replace(State::Notified(additional)) {
+                        task.wake();
+                    }
 
-                    // Update the counter.
-                    self.notified += was_notified as usize;
+                    // Bump the notified count.
+                    self.notified += 1;
                 }
             }
         }
@@ -439,31 +436,6 @@ impl ListenerSlab {
                 Some(false)
             }
         }
-    }
-}
-
-impl Entry {
-    /// Create a new, empty entry.
-    pub(crate) fn new() -> Self {
-        Self {
-            state: Cell::new(State::Created),
-            prev: Cell::new(None),
-            next: Cell::new(None),
-        }
-    }
-
-    /// Indicate that this entry has been notified.
-    #[cold]
-    pub(crate) fn notify(&self, additional: bool) -> bool {
-        match self.state.replace(State::Notified(additional)) {
-            State::Notified(_) => {}
-            State::Created => {}
-            State::NotifiedTaken => {}
-            State::Task(w) => w.wake(),
-        }
-
-        // Return whether the notification would have had any effect.
-        true
     }
 }
 

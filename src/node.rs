@@ -3,7 +3,7 @@
 use crate::list::{Listener, ListenerSlab};
 use crate::sync::atomic::{AtomicUsize, Ordering};
 use crate::sync::Arc;
-use crate::{Notify, NotifyKind, State, Task};
+use crate::{State, Task};
 
 use core::num::NonZeroUsize;
 use crossbeam_utils::atomic::AtomicCell;
@@ -19,7 +19,13 @@ pub(crate) enum Node {
     },
 
     /// This node is notifying a listener.
-    Notify(Notify),
+    Notify {
+        /// The number of listeners to notify.
+        count: usize,
+
+        /// Whether to wake up notified listeners.
+        additional: bool,
+    },
 
     /// This node is removing a listener.
     RemoveListener {
@@ -71,12 +77,9 @@ impl Node {
                 task_waiting.entry_id.store(key.get(), Ordering::Release);
                 return task_waiting.task.take();
             }
-            Node::Notify(Notify { count, kind }) => {
+            Node::Notify { count, additional } => {
                 // Notify the listener.
-                match kind {
-                    NotifyKind::Notify => list.notify_unnotified(count),
-                    NotifyKind::NotifyAdditional => list.notify_additional(count),
-                }
+                list.notify(count, additional);
             }
             Node::RemoveListener {
                 listener,

@@ -90,8 +90,6 @@ use std::panic::{RefUnwindSafe, UnwindSafe};
 #[cfg(feature = "std")]
 use std::time::{Duration, Instant};
 
-use node::Node;
-
 #[cfg(feature = "std")]
 use parking::Unparker;
 
@@ -162,26 +160,6 @@ impl TaskRef<'_> {
     }
 }
 
-/// Details of a notification.
-#[derive(Copy, Clone)]
-struct Notify {
-    /// The number of listeners to notify.
-    count: usize,
-
-    /// The notification strategy.
-    kind: NotifyKind,
-}
-
-/// The strategy for notifying listeners.
-#[derive(Copy, Clone)]
-enum NotifyKind {
-    /// Notify non-notified listeners.
-    Notify,
-
-    /// Notify all listeners.
-    NotifyAdditional,
-}
-
 /// Inner state of [`Event`].
 struct Inner {
     /// The number of notified entries, or `usize::MAX` if all of them have been notified.
@@ -208,15 +186,6 @@ impl Inner {
             inner: self,
             guard: Some(guard),
         })
-    }
-
-    /// Push a pending operation to the queue.
-    #[cold]
-    pub(crate) fn push(&self, node: Node) {
-        self.list.queue.push(node);
-
-        // Acquire and drop the lock to make sure that the queue is flushed.
-        let _guard = self.lock();
     }
 }
 
@@ -337,14 +306,7 @@ impl Event {
             // Notify if there is at least one unnotified listener and the number of notified
             // listeners is less than `n`.
             if inner.notified.load(Ordering::Acquire) < n {
-                if let Some(mut lock) = inner.lock() {
-                    lock.notify_unnotified(n);
-                } else {
-                    inner.push(Node::Notify(Notify {
-                        count: n,
-                        kind: NotifyKind::Notify,
-                    }));
-                }
+                inner.notify(n, false);
             }
         }
     }
@@ -388,14 +350,7 @@ impl Event {
             // Notify if there is at least one unnotified listener and the number of notified
             // listeners is less than `n`.
             if inner.notified.load(Ordering::Acquire) < n {
-                if let Some(mut lock) = inner.lock() {
-                    lock.notify_unnotified(n);
-                } else {
-                    inner.push(Node::Notify(Notify {
-                        count: n,
-                        kind: NotifyKind::Notify,
-                    }));
-                }
+                inner.notify(n, false); 
             }
         }
     }
@@ -438,14 +393,7 @@ impl Event {
         if let Some(inner) = self.try_inner() {
             // Notify if there is at least one unnotified listener.
             if inner.notified.load(Ordering::Acquire) < usize::MAX {
-                if let Some(mut lock) = inner.lock() {
-                    lock.notify_additional(n);
-                } else {
-                    inner.push(Node::Notify(Notify {
-                        count: n,
-                        kind: NotifyKind::NotifyAdditional,
-                    }));
-                }
+                inner.notify(n, true);
             }
         }
     }
@@ -490,14 +438,7 @@ impl Event {
         if let Some(inner) = self.try_inner() {
             // Notify if there is at least one unnotified listener.
             if inner.notified.load(Ordering::Acquire) < usize::MAX {
-                if let Some(mut lock) = inner.lock() {
-                    lock.notify_additional(n);
-                } else {
-                    inner.push(Node::Notify(Notify {
-                        count: n,
-                        kind: NotifyKind::NotifyAdditional,
-                    }));
-                }
+                inner.notify(n, true); 
             }
         }
     }
