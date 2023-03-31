@@ -610,15 +610,54 @@ unsafe impl<B: Borrow<Inner> + Unpin + Sync> Sync for Listener<B> {}
 impl<B: Borrow<Inner> + Unpin> Listener<B> {
     /// Wait until the provided deadline.
     #[cfg(feature = "std")]
-    fn wait_internal(mut self, deadline: Option<Instant>) -> bool {
-        let (parker, unparker) = parking::pair();
+    fn wait_internal(self, deadline: Option<Instant>) -> bool {
+        use std::cell::RefCell;
 
+        std::thread_local! {
+            /// Cached thread-local parker/unparker pair.
+            static PARKER: RefCell<Option<(parking::Parker, Task)>> = RefCell::new(None);
+        }
+
+        // Try to borrow the thread-local parker/unparker pair.
+        let mut this = Some(self);
+        PARKER
+            .try_with({
+                |parker| {
+                    let mut pair = parker
+                        .try_borrow_mut()
+                        .expect("Shouldn't be able to borrow parker reentrantly");
+                    let (parker, unparker) = pair.get_or_insert_with(|| {
+                        let (parker, unparker) = parking::pair();
+                        (parker, Task::Unparker(unparker))
+                    });
+
+                    this.take()
+                        .unwrap()
+                        .wait_with_parker(deadline, parker, unparker.as_task_ref())
+                }
+            })
+            .unwrap_or_else(|_| {
+                // If the pair isn't accessible, we may be being called in a destructor.
+                // Just create a new pair.
+                let (parker, unparker) = parking::pair();
+                this.take().unwrap().wait_with_parker(
+                    deadline,
+                    &parker,
+                    TaskRef::Unparker(&unparker),
+                )
+            })
+    }
+
+    /// Wait until the provided deadline using the specified parker/unparker pair.
+    #[cfg(feature = "std")]
+    fn wait_with_parker(
+        mut self,
+        deadline: Option<Instant>,
+        parker: &parking::Parker,
+        unparker: TaskRef<'_>,
+    ) -> bool {
         // Set the listener's state to `Task`.
-        match self
-            .event
-            .borrow()
-            .register(&mut self.listener, TaskRef::Unparker(&unparker))
-        {
+        match self.event.borrow().register(&mut self.listener, unparker) {
             Some(true) => {
                 // We were already notified, so we don't need to park.
                 return true;
@@ -658,7 +697,7 @@ impl<B: Borrow<Inner> + Unpin> Listener<B> {
             if self
                 .event
                 .borrow()
-                .register(&mut self.listener, TaskRef::Unparker(&unparker))
+                .register(&mut self.listener, unparker)
                 .expect("We never removed ourself from the list")
             {
                 return true;
