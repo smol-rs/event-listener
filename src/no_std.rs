@@ -248,7 +248,7 @@ impl Drop for ListGuard<'_> {
         }
 
         // Update the atomic `notified` counter.
-        let notified = if list.notified < list.len() {
+        let notified = if list.notified < list.len {
             list.notified
         } else {
             core::usize::MAX
@@ -412,7 +412,7 @@ pub(crate) struct ListenerSlab {
     start: Option<NonZeroUsize>,
 
     /// The number of notified entries in the list.
-    pub(crate) notified: usize,
+    notified: usize,
 
     /// The total number of listeners.
     len: usize,
@@ -434,11 +434,6 @@ impl ListenerSlab {
             len: 0,
             first_empty: unsafe { NonZeroUsize::new_unchecked(1) },
         }
-    }
-
-    /// Get the number of entries in the list.
-    pub(crate) fn len(&self) -> usize {
-        self.listeners.len() - 1
     }
 
     /// Inserts a new entry into the list.
@@ -539,6 +534,7 @@ impl ListenerSlab {
                 }
             }
         }
+        self.len -= 1;
 
         Some(state)
     }
