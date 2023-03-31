@@ -482,7 +482,7 @@ impl ListenerSlab {
             _ => return None,
         };
 
-        let entry = self.listeners.remove(key.get());
+        let entry = &self.listeners[key.get()];
         let prev = entry.prev().get();
         let next = entry.next().get();
 

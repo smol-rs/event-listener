@@ -347,7 +347,7 @@ impl Event {
             // Notify if there is at least one unnotified listener and the number of notified
             // listeners is less than `n`.
             if inner.notified.load(Ordering::Acquire) < n {
-                inner.notify(n, false); 
+                inner.notify(n, false);
             }
         }
     }
@@ -435,7 +435,7 @@ impl Event {
         if let Some(inner) = self.try_inner() {
             // Notify if there is at least one unnotified listener.
             if inner.notified.load(Ordering::Acquire) < usize::MAX {
-                inner.notify(n, true); 
+                inner.notify(n, true);
             }
         }
     }

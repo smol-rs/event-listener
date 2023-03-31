@@ -3,18 +3,16 @@
 use super::node::Node;
 use crate::sync::atomic::{AtomicPtr, Ordering};
 
-use crossbeam_utils::CachePadded;
-
 use alloc::boxed::Box;
 use core::ptr;
 
 /// A queue of nodes.
 pub(crate) struct Queue {
     /// The head of the queue.
-    head: CachePadded<AtomicPtr<QueueNode>>,
+    head: AtomicPtr<QueueNode>,
 
     /// The tail of the queue.
-    tail: CachePadded<AtomicPtr<QueueNode>>,
+    tail: AtomicPtr<QueueNode>,
 }
 
 /// A single node in the `Queue`.
@@ -30,8 +28,8 @@ impl Queue {
     /// Create a new queue.
     pub(crate) fn new() -> Self {
         Self {
-            head: CachePadded::new(AtomicPtr::new(ptr::null_mut())),
-            tail: CachePadded::new(AtomicPtr::new(ptr::null_mut())),
+            head: AtomicPtr::new(ptr::null_mut()),
+            tail: AtomicPtr::new(ptr::null_mut()),
         }
     }
 
