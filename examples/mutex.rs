@@ -63,9 +63,9 @@ impl<T> Mutex<T> {
                     // Start listening and then try locking again.
                     listener = Some(self.lock_ops.listen());
                 }
-                Some(l) => {
+                Some(mut l) => {
                     // Wait until a notification is received.
-                    l.wait();
+                    l.as_mut().wait();
                 }
             }
         }
@@ -88,9 +88,9 @@ impl<T> Mutex<T> {
                     // Start listening and then try locking again.
                     listener = Some(self.lock_ops.listen());
                 }
-                Some(l) => {
+                Some(mut l) => {
                     // Wait until a notification is received.
-                    if !l.wait_deadline(deadline) {
+                    if !l.as_mut().wait_deadline(deadline) {
                         return None;
                     }
                 }

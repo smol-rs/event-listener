@@ -27,28 +27,22 @@
 //!         event.notify(1);
 //!     });
 //!
-//!     WaitThreeSeconds { listener: Some(listener) }
+//!     WaitThreeSeconds { listener }
 //! }
 //!
 //! struct WaitThreeSeconds {
-//!     listener: Option<EventListener>,
+//!     listener: Pin<Box<EventListener>>,
 //! }
 //!
 //! impl EventListenerFuture for WaitThreeSeconds {
 //!     type Output = ();
 //!
-//!     fn poll_with_strategy<S: Strategy>(
-//!         mut self: Pin<&mut Self>,
+//!     fn poll_with_strategy<'a, S: Strategy<'a>>(
+//!         mut self: Pin<&'a mut Self>,
 //!         strategy: &mut S,
 //!         context: &mut S::Context,
 //!     ) -> Poll<Self::Output> {
-//!         match strategy.poll(self.listener.take().unwrap(), context) {
-//!             Ok(()) => Poll::Ready(()),
-//!             Err(listener) => {
-//!                 self.listener = Some(listener);
-//!                 Poll::Pending
-//!            }
-//!        }
+//!         strategy.poll(self.listener.as_mut(), context)
 //!     }
 //! }
 //!
@@ -95,7 +89,7 @@ pub use pin_project_lite::pin_project;
 ///     impl EventListenerFuture for MyFuture {
 ///         type Output = ();
 ///
-///         fn poll_with_strategy<S: Strategy>(
+///         fn poll_with_strategy<'a, S: Strategy<'a>>(
 ///             self: Pin<&mut Self>,
 ///             strategy: &mut S,
 ///             context: &mut S::Context,
@@ -199,8 +193,8 @@ pub trait EventListenerFuture {
     ///
     /// This function should use the `Strategy::poll` method to poll the future, and proceed
     /// based on the result.
-    fn poll_with_strategy<S: Strategy>(
-        self: Pin<&mut Self>,
+    fn poll_with_strategy<'a, S: Strategy<'a>>(
+        self: Pin<&'a mut Self>,
         strategy: &mut S,
         context: &mut S::Context,
     ) -> Poll<Self::Output>;
@@ -314,42 +308,43 @@ impl<F: EventListenerFuture + ?Sized> Future for FutureWrapper<F> {
 /// ```
 /// use event_listener::{Event, EventListener};
 /// use event_listener_strategy::{EventListenerFuture, Strategy, Blocking, NonBlocking};
+/// use std::pin::Pin;
 ///
-/// async fn wait_on<S: Strategy>(evl: EventListener, strategy: &mut S) {
+/// async fn wait_on<'a, S: Strategy<'a>>(evl: Pin<&'a mut EventListener>, strategy: &mut S) {
 ///     strategy.wait(evl).await;
 /// }
 ///
 /// # futures_lite::future::block_on(async {
 /// // Block on the future.
 /// let ev = Event::new();
-/// let listener = ev.listen();
+/// let mut listener = ev.listen();
 /// ev.notify(1);
 ///
-/// wait_on(listener, &mut Blocking::default()).await;
+/// wait_on(listener.as_mut(), &mut Blocking::default()).await;
 ///
 /// // Poll the future.
-/// let listener = ev.listen();
+/// listener.as_mut().listen();
 /// ev.notify(1);
 ///
-/// wait_on(listener, &mut NonBlocking::default()).await;
+/// wait_on(listener.as_mut(), &mut NonBlocking::default()).await;
 /// # });
 /// ```
-pub trait Strategy {
+pub trait Strategy<'a> {
     /// The context needed to poll the future.
     type Context: ?Sized;
 
     /// The future returned by the [`Strategy::wait`] method.
-    type Future: Future;
+    type Future: Future + 'a;
 
     /// Poll the event listener until it is ready.
     fn poll(
         &mut self,
-        event_listener: EventListener,
+        event_listener: Pin<&mut EventListener>,
         context: &mut Self::Context,
-    ) -> Result<(), EventListener>;
+    ) -> Poll<()>;
 
     /// Wait for the event listener to become ready.
-    fn wait(&mut self, evl: EventListener) -> Self::Future;
+    fn wait(&mut self, evl: Pin<&'a mut EventListener>) -> Self::Future;
 }
 
 /// A strategy that uses polling to efficiently wait for an event.
@@ -358,25 +353,22 @@ pub struct NonBlocking<'a> {
     _marker: PhantomData<Context<'a>>,
 }
 
-impl<'a> Strategy for NonBlocking<'a> {
+impl<'a, 'evl> Strategy<'evl> for NonBlocking<'a> {
     type Context = Context<'a>;
-    type Future = EventListener;
+    type Future = Pin<&'evl mut EventListener>;
 
     #[inline]
-    fn wait(&mut self, evl: EventListener) -> Self::Future {
+    fn wait(&mut self, evl: Pin<&'evl mut EventListener>) -> Self::Future {
         evl
     }
 
     #[inline]
     fn poll(
         &mut self,
-        mut event_listener: EventListener,
+        event_listener: Pin<&mut EventListener>,
         context: &mut Self::Context,
-    ) -> Result<(), EventListener> {
-        match Pin::new(&mut event_listener).poll(context) {
-            Poll::Ready(()) => Ok(()),
-            Poll::Pending => Err(event_listener),
-        }
+    ) -> Poll<()> {
+        event_listener.poll(context)
     }
 }
 
@@ -388,12 +380,12 @@ pub struct Blocking {
 }
 
 #[cfg(feature = "std")]
-impl Strategy for Blocking {
+impl<'evl> Strategy<'evl> for Blocking {
     type Context = ();
     type Future = Ready;
 
     #[inline]
-    fn wait(&mut self, evl: EventListener) -> Self::Future {
+    fn wait(&mut self, evl: Pin<&'evl mut EventListener>) -> Self::Future {
         evl.wait();
         Ready { _private: () }
     }
@@ -401,11 +393,11 @@ impl Strategy for Blocking {
     #[inline]
     fn poll(
         &mut self,
-        event_listener: EventListener,
+        event_listener: Pin<&mut EventListener>,
         _context: &mut Self::Context,
-    ) -> Result<(), EventListener> {
+    ) -> Poll<()> {
         event_listener.wait();
-        Ok(())
+        Poll::Ready(())
     }
 }
 

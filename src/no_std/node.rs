@@ -1,12 +1,16 @@
+//! An operation that can be delayed.
+
 //! The node that makes up queues.
 
-use crate::list::{Entry, List, State};
-use crate::sync::atomic::{AtomicUsize, Ordering};
+use crate::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use crate::sync::Arc;
-use crate::{Notify, NotifyKind, Task};
+use crate::sys::ListenerSlab;
+use crate::{State, Task};
+
+use alloc::boxed::Box;
 
 use core::num::NonZeroUsize;
-use crossbeam_utils::atomic::AtomicCell;
+use core::ptr;
 
 /// A node in the backup queue.
 pub(crate) enum Node {
@@ -19,7 +23,13 @@ pub(crate) enum Node {
     },
 
     /// This node is notifying a listener.
-    Notify(Notify),
+    Notify {
+        /// The number of listeners to notify.
+        count: usize,
+
+        /// Whether to wake up notified listeners.
+        additional: bool,
+    },
 
     /// This node is removing a listener.
     RemoveListener {
@@ -34,9 +44,10 @@ pub(crate) enum Node {
     Waiting(Task),
 }
 
+#[derive(Debug)]
 pub(crate) struct TaskWaiting {
     /// The task that is being waited on.
-    task: AtomicCell<Option<Task>>,
+    task: AtomicCell<Task>,
 
     /// The ID of the new entry.
     ///
@@ -48,7 +59,7 @@ impl Node {
     pub(crate) fn listener() -> (Self, Arc<TaskWaiting>) {
         // Create a new `TaskWaiting` structure.
         let task_waiting = Arc::new(TaskWaiting {
-            task: AtomicCell::new(None),
+            task: AtomicCell::new(),
             entry_id: AtomicUsize::new(0),
         });
 
@@ -61,35 +72,27 @@ impl Node {
     }
 
     /// Apply the node to the list.
-    pub(crate) fn apply(self, list: &mut List) -> Option<Task> {
+    pub(super) fn apply(self, list: &mut ListenerSlab) -> Option<Task> {
         match self {
             Node::AddListener { task_waiting } => {
                 // Add a new entry to the list.
-                let entry = Entry::new();
-                let key = list.insert(entry);
+                let key = list.insert(State::Created);
 
                 // Send the new key to the listener and wake it if necessary.
                 task_waiting.entry_id.store(key.get(), Ordering::Release);
-                return task_waiting.task.take();
+
+                return task_waiting.task.take().map(|t| *t);
             }
-            Node::Notify(Notify { count, kind }) => {
-                // Notify the listener.
-                match kind {
-                    NotifyKind::Notify => list.notify_unnotified(count),
-                    NotifyKind::NotifyAdditional => list.notify_additional(count),
-                }
+            Node::Notify { count, additional } => {
+                // Notify the next `count` listeners.
+                list.notify(count, additional);
             }
             Node::RemoveListener {
                 listener,
                 propagate,
             } => {
                 // Remove the listener from the list.
-                let state = list.remove(listener);
-
-                if let (true, State::Notified(additional)) = (propagate, state) {
-                    // Propagate the notification to the next listener.
-                    list.notify(1, additional);
-                }
+                list.remove(listener, propagate);
             }
             Node::Waiting(task) => {
                 return Some(task);
@@ -111,7 +114,7 @@ impl TaskWaiting {
     /// Register a listener.
     pub(crate) fn register(&self, task: Task) {
         // Set the task.
-        if let Some(task) = self.task.swap(Some(task)) {
+        if let Some(task) = self.task.replace(Some(Box::new(task))) {
             task.wake();
         }
 
@@ -120,5 +123,41 @@ impl TaskWaiting {
             // Wake the task.
             self.task.take().unwrap().wake();
         }
+    }
+}
+
+/// A shared pointer to a value.
+///
+/// The inner value is a `Box<T>`.
+#[derive(Debug)]
+struct AtomicCell<T>(AtomicPtr<T>);
+
+impl<T> AtomicCell<T> {
+    /// Create a new `AtomicCell`.
+    fn new() -> Self {
+        Self(AtomicPtr::new(ptr::null_mut()))
+    }
+
+    /// Swap the value out.
+    fn replace(&self, value: Option<Box<T>>) -> Option<Box<T>> {
+        let value = value.map_or(ptr::null_mut(), |value| Box::into_raw(value));
+        let old_value = self.0.swap(value, Ordering::SeqCst);
+
+        if old_value.is_null() {
+            None
+        } else {
+            Some(unsafe { Box::from_raw(old_value) })
+        }
+    }
+
+    /// Take the value out.
+    fn take(&self) -> Option<Box<T>> {
+        self.replace(None)
+    }
+}
+
+impl<T> Drop for AtomicCell<T> {
+    fn drop(&mut self) {
+        self.take();
     }
 }
