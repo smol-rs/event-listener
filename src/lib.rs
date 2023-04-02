@@ -76,6 +76,8 @@ extern crate alloc;
 #[cfg_attr(not(feature = "std"), path = "no_std.rs")]
 mod sys;
 
+mod notify;
+
 use alloc::boxed::Box;
 
 use core::fmt;
@@ -94,6 +96,8 @@ use std::time::{Duration, Instant};
 
 use sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use sync::{Arc, WithMut};
+
+pub use notify::{IntoNotification, Notification, Notify, NotifyAdditional, Tag, TagWith};
 
 /// 1.39-compatible replacement for `matches!`
 macro_rules! matches {
@@ -248,7 +252,7 @@ impl Event {
     #[inline]
     pub fn notify(&self, n: usize) {
         // Make sure the notification comes after whatever triggered it.
-        full_fence();
+        notify::full_fence();
 
         if let Some(inner) = self.try_inner() {
             // Notify if there is at least one unnotified listener and the number of notified
@@ -336,7 +340,7 @@ impl Event {
     #[inline]
     pub fn notify_additional(&self, n: usize) {
         // Make sure the notification comes after whatever triggered it.
-        full_fence();
+        notify::full_fence();
 
         if let Some(inner) = self.try_inner() {
             // Notify if there is at least one unnotified listener.
@@ -490,7 +494,7 @@ impl EventListener {
         self.listener().insert();
 
         // Make sure the listener is registered before whatever happens next.
-        full_fence();
+        notify::full_fence();
     }
 
     /// Blocks until a notification is received.
@@ -889,34 +893,6 @@ impl TaskRef<'_> {
             #[cfg(feature = "std")]
             Self::Unparker(unparker) => Task::Unparker(unparker.clone()),
         }
-    }
-}
-
-/// Equivalent to `atomic::fence(Ordering::SeqCst)`, but in some cases faster.
-#[inline]
-fn full_fence() {
-    if cfg!(all(
-        any(target_arch = "x86", target_arch = "x86_64"),
-        not(miri)
-    )) {
-        // HACK(stjepang): On x86 architectures there are two different ways of executing
-        // a `SeqCst` fence.
-        //
-        // 1. `atomic::fence(SeqCst)`, which compiles into a `mfence` instruction.
-        // 2. `_.compare_exchange(_, _, SeqCst, SeqCst)`, which compiles into a `lock cmpxchg` instruction.
-        //
-        // Both instructions have the effect of a full barrier, but empirical benchmarks have shown
-        // that the second one is sometimes a bit faster.
-        //
-        // The ideal solution here would be to use inline assembly, but we're instead creating a
-        // temporary atomic variable and compare-and-exchanging its value. No sane compiler to
-        // x86 platforms is going to optimize this away.
-        sync::atomic::compiler_fence(Ordering::SeqCst);
-        let a = AtomicUsize::new(0);
-        let _ = a.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst);
-        sync::atomic::compiler_fence(Ordering::SeqCst);
-    } else {
-        sync::atomic::fence(Ordering::SeqCst);
     }
 }
 
