@@ -161,8 +161,12 @@ macro_rules! easy_wrapper {
                 context: &mut ::core::task::Context<'_>
             ) -> ::core::task::Poll<Self::Output> {
                 // SAFETY: We are pinned, so our inner type must be pinned too.
+                // Uses get_unchecked then new_unchecked instead of map_unchecked_mut because it
+                // doesn't work on 1.39 yet... looks like it works on 1.42, but it's not worth it
+                // to bump MSRV yet
                 unsafe {
-                    self.map_unchecked_mut(|this| &mut this._inner).poll(context)
+                    Pin::new_unchecked(&mut self.get_unchecked_mut()._inner)
+                        .poll(context)
                 }
             }
         }
@@ -261,14 +265,18 @@ impl<F: ?Sized> FutureWrapper<F> {
     #[inline]
     pub fn get_pin_mut(self: Pin<&mut Self>) -> Pin<&mut F> {
         // SAFETY: We are pinned, so our inner type must be pinned too.
-        unsafe { self.map_unchecked_mut(|this| &mut this.inner) }
+        // Uses get_unchecked then new_unchecked instead of map_unchecked_mut because it doesn't
+        // work on 1.39 yet... looks like it works on 1.42, but it's not worth it to bump MSRV yet
+        unsafe { Pin::new_unchecked(&mut Pin::get_unchecked_mut(self).inner) }
     }
 
     /// Get a pinned reference to the inner future.
     #[inline]
     pub fn get_pin_ref(self: Pin<&Self>) -> Pin<&F> {
         // SAFETY: We are pinned, so our inner type must be pinned too.
-        unsafe { self.map_unchecked(|this| &this.inner) }
+        // Uses get_ref then new_unchecked instead of map_unchecked_mut because it doesn't
+        // work on 1.39 yet... looks like it works on 1.42, but it's not worth it to bump MSRV yet
+        unsafe { Pin::new_unchecked(&Pin::get_ref(self).inner) }
     }
 }
 
@@ -411,5 +419,34 @@ impl Future for Ready {
     #[inline]
     fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
         Poll::Ready(())
+    }
+}
+
+#[allow(unused)]
+mod make_sure_easy_wrapper_builds_on_msrv {
+    use super::*;
+
+    struct MyFuture;
+
+    impl EventListenerFuture for MyFuture {
+        type Output = ();
+
+        fn poll_with_strategy<'a, S: Strategy<'a>>(
+            self: Pin<&mut Self>,
+            _strategy: &mut S,
+            _context: &mut S::Context,
+        ) -> Poll<Self::Output> {
+            Poll::Ready(())
+        }
+    }
+
+    easy_wrapper! {
+        pub(super) struct MyFutureWrapper(MyFuture => ());
+        pub(super) wait();
+    }
+
+    #[test]
+    fn test() {
+        let _future = MyFutureWrapper::_new(MyFuture);
     }
 }
