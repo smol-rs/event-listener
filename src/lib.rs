@@ -222,7 +222,7 @@ impl<T> Event<T> {
     #[inline]
     pub fn is_notified(&self) -> bool {
         self.try_inner()
-            .map_or(false, |inner| inner.notified.load(Ordering::Relaxed) > 0)
+            .map_or(false, |inner| inner.notified.load(Ordering::Acquire) > 0)
     }
 
     /// Returns a guard listening for a notification.
