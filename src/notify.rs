@@ -221,22 +221,29 @@ where
     }
 }
 
-/// A single notification.
-pub(crate) struct SingleNotify<T> {
+/// A generic notification.
+pub(crate) struct GenericNotify<F> {
+    /// Number of listeners to notify.
+    count: usize,
+
+    /// Whether this notification is additional.
     additional: bool,
-    tag: Option<T>,
+
+    /// Generate tags.
+    tags: F,
 }
 
-impl<T> SingleNotify<T> {
-    pub(crate) fn new(additional: bool, tag: T) -> Self {
+impl<T, F: FnMut() -> T> GenericNotify<F> {
+    pub(crate) fn new(count: usize, additional: bool, tags: F) -> Self {
         Self {
+            count,
             additional,
-            tag: Some(tag),
+            tags,
         }
     }
 }
 
-impl<T> Notification for SingleNotify<T> {
+impl<T, F: FnMut() -> T> Notification for GenericNotify<F> {
     type Tag = T;
 
     fn is_additional(&self) -> bool {
@@ -248,11 +255,11 @@ impl<T> Notification for SingleNotify<T> {
     }
 
     fn count(&self) -> usize {
-        1
+        self.count
     }
 
     fn next_tag(&mut self) -> Self::Tag {
-        self.tag.take().unwrap()
+        (self.tags)()
     }
 }
 
