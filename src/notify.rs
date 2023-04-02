@@ -8,13 +8,14 @@ pub trait Notification {
     /// The tag data associated with a notification.
     type Tag;
 
-    /// Emit a fence to ensure that the notification is visible to the
-    /// listeners.
+    /// Emit a fence to ensure that the notification is visible to the listeners.
     fn fence(&self);
 
-    /// Get the number of listeners to wake, given the number of listeners
-    /// that are currently waiting.
-    fn count(&self, waiting: usize) -> usize;
+    /// Whether or not the number of currently waiting listeners should be subtracted from `count()`.
+    fn is_additional(&self) -> bool;
+
+    /// Get the number of listeners to wake.
+    fn count(&self) -> usize;
 
     /// Get a tag to be associated with a notification.
     ///
@@ -42,46 +43,53 @@ impl From<usize> for Notify {
 impl Notification for Notify {
     type Tag = ();
 
-    fn fence(&self) {
-        full_fence();
+    fn is_additional(&self) -> bool {
+        false
     }
-
-    fn count(&self, waiting: usize) -> usize {
-        self.0.saturating_sub(waiting)
-    }
-
-    fn next_tag(&mut self) -> Self::Tag {}
-}
-
-/// Notify a given number of listeners.
-#[derive(Debug, Clone)]
-pub struct NotifyAdditional(usize);
-
-impl NotifyAdditional {
-    /// Create a new `NotifyAdditional` with the given number of listeners to notify.
-    fn new(count: usize) -> Self {
-        Self(count)
-    }
-}
-
-impl From<usize> for NotifyAdditional {
-    fn from(count: usize) -> Self {
-        Self::new(count)
-    }
-}
-
-impl Notification for NotifyAdditional {
-    type Tag = ();
 
     fn fence(&self) {
         full_fence();
     }
 
-    fn count(&self, _waiting: usize) -> usize {
+    fn count(&self) -> usize {
         self.0
     }
 
     fn next_tag(&mut self) -> Self::Tag {}
+}
+
+/// Make the underlying notification additional.
+#[derive(Debug, Clone)]
+pub struct Additional<N: ?Sized>(N);
+
+impl<N> Additional<N> {
+    /// Create a new `Additional` with the given notification.
+    fn new(inner: N) -> Self {
+        Self(inner)
+    }
+}
+
+impl<N> Notification for Additional<N>
+where
+    N: Notification + ?Sized,
+{
+    type Tag = N::Tag;
+
+    fn is_additional(&self) -> bool {
+        true
+    }
+
+    fn fence(&self) {
+        self.0.fence();
+    }
+
+    fn count(&self) -> usize {
+        self.0.count()
+    }
+
+    fn next_tag(&mut self) -> Self::Tag {
+        self.0.next_tag()
+    }
 }
 
 /// Don't emit a fence for this notification.
@@ -101,12 +109,16 @@ where
 {
     type Tag = N::Tag;
 
+    fn is_additional(&self) -> bool {
+        self.0.is_additional()
+    }
+
     fn fence(&self) {
         // Don't emit a fence.
     }
 
-    fn count(&self, waiting: usize) -> usize {
-        self.0.count(waiting)
+    fn count(&self) -> usize {
+        self.0.count()
     }
 
     fn next_tag(&mut self) -> Self::Tag {
@@ -138,12 +150,16 @@ where
 {
     type Tag = T;
 
+    fn is_additional(&self) -> bool {
+        self.inner.is_additional()
+    }
+
     fn fence(&self) {
         self.inner.fence();
     }
 
-    fn count(&self, waiting: usize) -> usize {
-        self.inner.count(waiting)
+    fn count(&self) -> usize {
+        self.inner.count()
     }
 
     fn next_tag(&mut self) -> Self::Tag {
@@ -188,16 +204,55 @@ where
 {
     type Tag = T;
 
+    fn is_additional(&self) -> bool {
+        self.inner.is_additional()
+    }
+
     fn fence(&self) {
         self.inner.fence();
     }
 
-    fn count(&self, waiting: usize) -> usize {
-        self.inner.count(waiting)
+    fn count(&self) -> usize {
+        self.inner.count()
     }
 
     fn next_tag(&mut self) -> Self::Tag {
         (self.tag)()
+    }
+}
+
+/// A single notification.
+pub(crate) struct SingleNotify<T> {
+    additional: bool,
+    tag: Option<T>,
+}
+
+impl<T> SingleNotify<T> {
+    pub(crate) fn new(additional: bool, tag: T) -> Self {
+        Self {
+            additional,
+            tag: Some(tag),
+        }
+    }
+}
+
+impl<T> Notification for SingleNotify<T> {
+    type Tag = T;
+
+    fn is_additional(&self) -> bool {
+        self.additional
+    }
+
+    fn fence(&self) {
+        // Don't emit a fence.
+    }
+
+    fn count(&self) -> usize {
+        1
+    }
+
+    fn next_tag(&mut self) -> Self::Tag {
+        self.tag.take().unwrap()
     }
 }
 
@@ -213,11 +268,11 @@ pub trait IntoNotification {
     fn into_notification(self) -> Self::Notify;
 
     /// Convert this value into an additional notification.
-    fn additional(self) -> NotifyAdditional
+    fn additional(self) -> Additional<Self::Notify>
     where
-        Self: Sized + IntoNotification<Notify = Notify>,
+        Self: Sized,
     {
-        NotifyAdditional::new(self.into_notification().count(0))
+        Additional::new(self.into_notification())
     }
 
     /// Don't emit a fence for this notification.
