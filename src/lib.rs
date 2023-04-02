@@ -862,6 +862,7 @@ enum TaskRef<'a> {
 
 impl TaskRef<'_> {
     /// Tells if this task will wake up the other task.
+    #[allow(unreachable_patterns)]
     fn will_wake(self, other: Self) -> bool {
         match (self, other) {
             (Self::Waker(a), Self::Waker(b)) => a.will_wake(b),
@@ -870,7 +871,6 @@ impl TaskRef<'_> {
                 // TODO: Use unreleased will_unpark API.
                 false
             }
-            #[cfg(feature = "std")]
             _ => false,
         }
     }

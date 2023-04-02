@@ -141,11 +141,13 @@ impl crate::Inner {
 
             State::Task(other_task) => {
                 // Only replace the task if it's different.
-                if !task.will_wake(other_task.as_task_ref()) {
-                    entry.state.set(State::Task(task.into_task()));
-                } else {
-                    entry.state.set(State::Task(other_task));
-                }
+                entry.state.set(State::Task({
+                    if !task.will_wake(other_task.as_task_ref()) {
+                        task.into_task()
+                    } else {
+                        other_task
+                    }
+                }));
 
                 Some(false)
             }

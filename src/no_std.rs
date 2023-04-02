@@ -287,38 +287,46 @@ enum Entry {
     Sentinel,
 }
 
+struct TakenState<'a> {
+    slot: &'a Cell<State>,
+    state: State,
+}
+
+impl Drop for TakenState<'_> {
+    fn drop(&mut self) {
+        self.slot
+            .set(mem::replace(&mut self.state, State::NotifiedTaken));
+    }
+}
+
+impl fmt::Debug for TakenState<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.state, f)
+    }
+}
+
+impl PartialEq for TakenState<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.state == other.state
+    }
+}
+
+impl<'a> TakenState<'a> {
+    fn new(slot: &'a Cell<State>) -> Self {
+        let state = slot.replace(State::NotifiedTaken);
+        Self { slot, state }
+    }
+}
+
 impl fmt::Debug for Entry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        struct TakenState<'a> {
-            state: Option<State>,
-            cell: &'a Cell<State>,
-        }
-
-        impl Drop for TakenState<'_> {
-            fn drop(&mut self) {
-                self.cell.set(self.state.take().unwrap());
-            }
-        }
-
-        impl fmt::Debug for TakenState<'_> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                fmt::Debug::fmt(self.state.as_ref().unwrap(), f)
-            }
-        }
-
         match self {
-            Entry::Listener { state, next, prev } => {
-                let taken = TakenState {
-                    state: Some(state.replace(State::Created)),
-                    cell: state,
-                };
-
-                f.debug_struct("Listener")
-                    .field("state", &taken)
-                    .field("prev", prev)
-                    .field("next", next)
-                    .finish()
-            }
+            Entry::Listener { state, next, prev } => f
+                .debug_struct("Listener")
+                .field("state", &TakenState::new(state))
+                .field("prev", prev)
+                .field("next", next)
+                .finish(),
             Entry::Empty(next) => f.debug_tuple("Empty").field(next).finish(),
             Entry::Sentinel => f.debug_tuple("Sentinel").finish(),
         }
@@ -327,17 +335,6 @@ impl fmt::Debug for Entry {
 
 impl PartialEq for Entry {
     fn eq(&self, other: &Entry) -> bool {
-        struct RestoreState<'a> {
-            state: Option<State>,
-            cell: &'a Cell<State>,
-        }
-
-        impl Drop for RestoreState<'_> {
-            fn drop(&mut self) {
-                self.cell.set(self.state.take().unwrap());
-            }
-        }
-
         match (self, other) {
             (
                 Self::Listener {
@@ -351,17 +348,7 @@ impl PartialEq for Entry {
                     next: next2,
                 },
             ) => {
-                let taken1 = RestoreState {
-                    state: Some(state1.replace(State::Created)),
-                    cell: state1,
-                };
-
-                let taken2 = RestoreState {
-                    state: Some(state2.replace(State::Created)),
-                    cell: state2,
-                };
-
-                if taken1.state != taken2.state {
+                if TakenState::new(state1) != TakenState::new(state2) {
                     return false;
                 }
 
