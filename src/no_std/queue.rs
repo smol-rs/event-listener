@@ -7,23 +7,23 @@ use alloc::boxed::Box;
 use core::ptr;
 
 /// An naive atomic queue of operations to process.
-pub(super) struct Queue {
+pub(super) struct Queue<T> {
     /// The head of the queue.
-    head: AtomicPtr<Link>,
+    head: AtomicPtr<Link<T>>,
 
     /// The tail of the queue.
-    tail: AtomicPtr<Link>,
+    tail: AtomicPtr<Link<T>>,
 }
 
-struct Link {
+struct Link<T> {
     /// The inner node.
-    node: Node,
+    node: Node<T>,
 
     /// The next node in the queue.
-    next: AtomicPtr<Link>,
+    next: AtomicPtr<Link<T>>,
 }
 
-impl Queue {
+impl<T> Queue<T> {
     /// Create a new, empty queue.
     pub(super) fn new() -> Self {
         Self {
@@ -33,7 +33,7 @@ impl Queue {
     }
 
     /// Push a new node onto the queue.
-    pub(super) fn push(&self, node: Node) {
+    pub(super) fn push(&self, node: Node<T>) {
         // Allocate a new link.
         let link = Box::into_raw(Box::new(Link {
             node,
@@ -86,7 +86,7 @@ impl Queue {
     }
 
     /// Pop a node from the queue.
-    pub(super) fn pop(&self) -> Option<Node> {
+    pub(super) fn pop(&self) -> Option<Node<T>> {
         // Pop the head of the queue.
         let mut head = self.head.load(Ordering::Acquire);
         loop {
@@ -120,7 +120,7 @@ impl Queue {
     }
 }
 
-impl Drop for Queue {
+impl<T> Drop for Queue<T> {
     fn drop(&mut self) {
         // Pop all nodes from the queue.
         while self.pop().is_some() {}
@@ -129,21 +129,17 @@ impl Drop for Queue {
 
 #[cfg(test)]
 mod tests {
+    use crate::notify::{GenericNotify, Notification};
+
     use super::*;
 
-    fn node_from_num(num: usize) -> Node {
-        Node::Notify {
-            count: num,
-            additional: true,
-        }
+    fn node_from_num(num: usize) -> Node<()> {
+        Node::Notify(GenericNotify::new(num, true, Box::new(|| ())))
     }
 
-    fn node_to_num(node: Node) -> usize {
+    fn node_to_num(node: Node<()>) -> usize {
         match node {
-            Node::Notify {
-                count,
-                additional: true,
-            } => count,
+            Node::Notify(notify) => notify.count(),
             _ => panic!("unexpected node"),
         }
     }

@@ -324,6 +324,11 @@ macro_rules! impl_for_numeric_types {
             type Notify = Notify;
 
             fn into_notification(self) -> Self::Notify {
+                #[allow(unused_comparisons)]
+                if self < 0 {
+                    panic!("negative notification count");
+                }
+
                 use core::convert::TryInto;
                 Notify::new(self.try_into().expect("overflow"))
             }

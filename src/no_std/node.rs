@@ -2,6 +2,7 @@
 
 //! The node that makes up queues.
 
+use crate::notify::GenericNotify;
 use crate::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use crate::sync::Arc;
 use crate::sys::ListenerSlab;
@@ -12,8 +13,10 @@ use alloc::boxed::Box;
 use core::num::NonZeroUsize;
 use core::ptr;
 
+pub(super) type GenericTags<T> = Box<dyn FnMut() -> T + Send + Sync + 'static>;
+
 /// A node in the backup queue.
-pub(crate) enum Node {
+pub(crate) enum Node<T> {
     /// This node is requesting to add a listener.
     // For some reason, the MSRV build says this variant is never constructed.
     #[allow(dead_code)]
@@ -23,13 +26,7 @@ pub(crate) enum Node {
     },
 
     /// This node is notifying a listener.
-    Notify {
-        /// The number of listeners to notify.
-        count: usize,
-
-        /// Whether to wake up notified listeners.
-        additional: bool,
-    },
+    Notify(GenericNotify<GenericTags<T>>),
 
     /// This node is removing a listener.
     RemoveListener {
@@ -55,7 +52,7 @@ pub(crate) struct TaskWaiting {
     entry_id: AtomicUsize,
 }
 
-impl Node {
+impl<T: Unpin> Node<T> {
     pub(crate) fn listener() -> (Self, Arc<TaskWaiting>) {
         // Create a new `TaskWaiting` structure.
         let task_waiting = Arc::new(TaskWaiting {
@@ -72,7 +69,7 @@ impl Node {
     }
 
     /// Apply the node to the list.
-    pub(super) fn apply(self, list: &mut ListenerSlab) -> Option<Task> {
+    pub(super) fn apply(self, list: &mut ListenerSlab<T>) -> Option<Task> {
         match self {
             Node::AddListener { task_waiting } => {
                 // Add a new entry to the list.
@@ -83,9 +80,9 @@ impl Node {
 
                 return task_waiting.task.take().map(|t| *t);
             }
-            Node::Notify { count, additional } => {
+            Node::Notify(notify) => {
                 // Notify the next `count` listeners.
-                list.notify(count, additional);
+                list.notify(notify);
             }
             Node::RemoveListener {
                 listener,

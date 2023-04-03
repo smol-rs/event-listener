@@ -2,10 +2,11 @@
 //!
 //! This implementation crates an intrusive linked list of listeners.
 
+use crate::notify::{GenericNotify, Notification};
 use crate::sync::atomic::Ordering;
 use crate::sync::cell::{Cell, UnsafeCell};
 use crate::sync::{Mutex, MutexGuard};
-use crate::{State, TaskRef};
+use crate::{RegisterResult, State, TaskRef};
 
 use core::marker::PhantomPinned;
 use core::mem;
@@ -13,17 +14,17 @@ use core::ops::{Deref, DerefMut};
 use core::pin::Pin;
 use core::ptr::NonNull;
 
-pub(super) struct List(Mutex<Inner>);
+pub(super) struct List<T>(Mutex<Inner<T>>);
 
-struct Inner {
+struct Inner<T> {
     /// The head of the linked list.
-    head: Option<NonNull<Link>>,
+    head: Option<NonNull<Link<T>>>,
 
     /// The tail of the linked list.
-    tail: Option<NonNull<Link>>,
+    tail: Option<NonNull<Link<T>>>,
 
     /// The first unnotified listener.
-    next: Option<NonNull<Link>>,
+    next: Option<NonNull<Link<T>>>,
 
     /// Total number of listeners.
     len: usize,
@@ -32,7 +33,7 @@ struct Inner {
     notified: usize,
 }
 
-impl List {
+impl<T> List<T> {
     /// Create a new, empty event listener list.
     pub(super) fn new() -> Self {
         Self(Mutex::new(Inner {
@@ -45,8 +46,8 @@ impl List {
     }
 }
 
-impl crate::Inner {
-    fn lock(&self) -> ListLock<'_, '_> {
+impl<T> crate::Inner<T> {
+    fn lock(&self) -> ListLock<'_, '_, T> {
         ListLock {
             inner: self,
             lock: self.list.0.lock().unwrap_or_else(|e| e.into_inner()),
@@ -56,7 +57,7 @@ impl crate::Inner {
     /// Add a new listener to the list.
     ///
     /// Does nothing is the listener is already registered.
-    pub(crate) fn insert(&self, listener: Pin<&mut Option<Listener>>) {
+    pub(crate) fn insert(&self, listener: Pin<&mut Option<Listener<T>>>) {
         let mut inner = self.lock();
 
         // SAFETY: We are locked, so we can access the inner `link`.
@@ -101,16 +102,16 @@ impl crate::Inner {
     /// Remove a listener from the list.
     pub(crate) fn remove(
         &self,
-        listener: Pin<&mut Option<Listener>>,
+        listener: Pin<&mut Option<Listener<T>>>,
         propogate: bool,
-    ) -> Option<State> {
+    ) -> Option<State<T>> {
         self.lock().remove(listener, propogate)
     }
 
     /// Notifies a number of entries.
     #[cold]
-    pub(crate) fn notify(&self, n: usize, additional: bool) {
-        self.lock().notify(n, additional)
+    pub(crate) fn notify(&self, notify: impl Notification<Tag = T>) {
+        self.lock().notify(notify)
     }
 
     /// Register a task to be notified when the event is triggered.
@@ -119,24 +120,27 @@ impl crate::Inner {
     /// isn't inserted, returns `None`.
     pub(crate) fn register(
         &self,
-        mut listener: Pin<&mut Option<Listener>>,
+        mut listener: Pin<&mut Option<Listener<T>>>,
         task: TaskRef<'_>,
-    ) -> Option<bool> {
+    ) -> RegisterResult<T> {
         let mut inner = self.lock();
 
         // SAFETY: We are locked, so we can access the inner `link`.
         let entry = unsafe {
             // SAFETY: We never move out the `link` field.
-            let listener = listener.as_mut().get_unchecked_mut().as_mut()?;
+            let listener = match listener.as_mut().get_unchecked_mut().as_mut() {
+                Some(listener) => listener,
+                None => return RegisterResult::NeverInserted,
+            };
             &*listener.link.get()
         };
 
         // Take out the state and check it.
         match entry.state.replace(State::NotifiedTaken) {
-            State::Notified(_) => {
+            State::Notified { tag, .. } => {
                 // We have been notified, remove the listener.
                 inner.remove(listener, false);
-                Some(true)
+                RegisterResult::Notified(tag)
             }
 
             State::Task(other_task) => {
@@ -149,24 +153,24 @@ impl crate::Inner {
                     }
                 }));
 
-                Some(false)
+                RegisterResult::Registered
             }
 
             _ => {
                 // We have not been notified, register the task.
                 entry.state.set(State::Task(task.into_task()));
-                Some(false)
+                RegisterResult::Registered
             }
         }
     }
 }
 
-impl Inner {
+impl<T> Inner<T> {
     fn remove(
         &mut self,
-        mut listener: Pin<&mut Option<Listener>>,
+        mut listener: Pin<&mut Option<Listener<T>>>,
         propogate: bool,
-    ) -> Option<State> {
+    ) -> Option<State<T>> {
         let entry = unsafe {
             // SAFETY: We never move out the `link` field.
             let listener = listener.as_mut().get_unchecked_mut().as_mut()?;
@@ -209,15 +213,20 @@ impl Inner {
                 .into_inner()
         };
 
-        let state = entry.state.into_inner();
+        let mut state = entry.state.into_inner();
 
         // Update the notified count.
         if state.is_notified() {
             self.notified -= 1;
 
             if propogate {
-                if let State::Notified(additional) = state {
-                    self.notify(1, additional);
+                let state = mem::replace(&mut state, State::NotifiedTaken);
+                if let State::Notified { additional, tag } = state {
+                    let tags = {
+                        let mut tag = Some(tag);
+                        move || tag.take().expect("tag already taken")
+                    };
+                    self.notify(GenericNotify::new(1, additional, tags));
                 }
             }
         }
@@ -227,10 +236,12 @@ impl Inner {
     }
 
     #[cold]
-    fn notify(&mut self, mut n: usize, additional: bool) {
-        if !additional {
-            // Make sure we're not notifying more than we have.
-            if n <= self.notified {
+    fn notify(&mut self, mut notify: impl Notification<Tag = T>) {
+        let mut n = notify.count();
+        let is_additional = notify.is_additional();
+
+        if !is_additional {
+            if n < self.notified {
                 return;
             }
             n -= self.notified;
@@ -249,7 +260,11 @@ impl Inner {
                     self.next = entry.next.get();
 
                     // Set the state to `Notified` and notify.
-                    if let State::Task(task) = entry.state.replace(State::Notified(additional)) {
+                    let tag = notify.next_tag();
+                    if let State::Task(task) = entry.state.replace(State::Notified {
+                        additional: is_additional,
+                        tag,
+                    }) {
                         task.wake();
                     }
 
@@ -261,26 +276,26 @@ impl Inner {
     }
 }
 
-struct ListLock<'a, 'b> {
-    lock: MutexGuard<'a, Inner>,
-    inner: &'b crate::Inner,
+struct ListLock<'a, 'b, T> {
+    lock: MutexGuard<'a, Inner<T>>,
+    inner: &'b crate::Inner<T>,
 }
 
-impl Deref for ListLock<'_, '_> {
-    type Target = Inner;
+impl<T> Deref for ListLock<'_, '_, T> {
+    type Target = Inner<T>;
 
     fn deref(&self) -> &Self::Target {
         &self.lock
     }
 }
 
-impl DerefMut for ListLock<'_, '_> {
+impl<T> DerefMut for ListLock<'_, '_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.lock
     }
 }
 
-impl Drop for ListLock<'_, '_> {
+impl<T> Drop for ListLock<'_, '_, T> {
     fn drop(&mut self) {
         let list = &mut **self;
 
@@ -295,27 +310,27 @@ impl Drop for ListLock<'_, '_> {
     }
 }
 
-pub(crate) struct Listener {
+pub(crate) struct Listener<T> {
     /// The inner link in the linked list.
     ///
     /// # Safety
     ///
     /// This can only be accessed while the central mutex is locked.
-    link: UnsafeCell<Link>,
+    link: UnsafeCell<Link<T>>,
 
     /// This listener cannot be moved after being pinned.
     _pin: PhantomPinned,
 }
 
-struct Link {
+struct Link<T> {
     /// The current state of the listener.
-    state: Cell<State>,
+    state: Cell<State<T>>,
 
     /// The previous link in the linked list.
-    prev: Cell<Option<NonNull<Link>>>,
+    prev: Cell<Option<NonNull<Link<T>>>>,
 
     /// The next link in the linked list.
-    next: Cell<Option<NonNull<Link>>>,
+    next: Cell<Option<NonNull<Link<T>>>>,
 }
 
 #[cfg(test)]
@@ -326,7 +341,7 @@ mod tests {
     macro_rules! make_listeners {
         ($($id:ident),*) => {
             $(
-                let $id = Option::<Listener>::None;
+                let $id = Option::<Listener<()>>::None;
                 pin!($id);
             )*
         };
@@ -364,7 +379,7 @@ mod tests {
         inner.insert(listen3.as_mut());
 
         // Notify one.
-        inner.notify(1, false);
+        inner.notify(GenericNotify::new(1, false, || ()));
 
         // Remove one.
         inner.remove(listen3, true);

@@ -97,7 +97,12 @@ use std::time::{Duration, Instant};
 use sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use sync::{Arc, WithMut};
 
-pub use notify::{IntoNotification, Notification, Notify, NotifyAdditional, Tag, TagWith};
+pub use notify::{Additional, IntoNotification, Notification, Notify, Tag, TagWith};
+
+/// Useful trait for listeners.
+pub mod prelude {
+    pub use crate::{IntoNotification, Notification};
+}
 
 /// 1.39-compatible replacement for `matches!`
 macro_rules! matches {
@@ -110,7 +115,7 @@ macro_rules! matches {
 }
 
 /// Inner state of [`Event`].
-struct Inner {
+struct Inner<T> {
     /// The number of notified entries, or `usize::MAX` if all of them have been notified.
     ///
     /// If there are no entries, this value is set to `usize::MAX`.
@@ -121,10 +126,10 @@ struct Inner {
     /// On `std` platforms, this is an intrusive linked list. On `no_std` platforms, this is a
     /// more traditional `Vec` of listeners, with an atomic queue used as a backup for high
     /// contention.
-    list: sys::List,
+    list: sys::List<T>,
 }
 
-impl Inner {
+impl<T: Unpin> Inner<T> {
     fn new() -> Self {
         Self {
             notified: AtomicUsize::new(core::usize::MAX),
@@ -152,48 +157,48 @@ impl Inner {
 /// kind of notification was delivered.
 ///
 /// Listeners are registered and notified in the first-in first-out fashion, ensuring fairness.
-pub struct Event {
+pub struct Event<T = ()> {
     /// A pointer to heap-allocated inner state.
     ///
     /// This pointer is initially null and gets lazily initialized on first use. Semantically, it
     /// is an `Arc<Inner>` so it's important to keep in mind that it contributes to the [`Arc`]'s
     /// reference count.
-    inner: AtomicPtr<Inner>,
+    inner: AtomicPtr<Inner<T>>,
 }
 
-unsafe impl Send for Event {}
-unsafe impl Sync for Event {}
+unsafe impl<T: Send> Send for Event<T> {}
+unsafe impl<T: Send> Sync for Event<T> {}
 
 #[cfg(feature = "std")]
-impl std::panic::UnwindSafe for Event {}
+impl<T> std::panic::UnwindSafe for Event<T> {}
 #[cfg(feature = "std")]
-impl std::panic::RefUnwindSafe for Event {}
+impl<T> std::panic::RefUnwindSafe for Event<T> {}
 
-impl fmt::Debug for Event {
+impl<T> fmt::Debug for Event<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Pad { .. }")
+        f.write_str("Event { .. }")
     }
 }
 
-impl Default for Event {
+impl<T: Unpin> Default for Event<T> {
     #[inline]
     fn default() -> Self {
-        Self::new()
+        Self::with_tag()
     }
 }
 
-impl Event {
-    /// Creates a new [`Event`].
+impl<T: Unpin> Event<T> {
+    /// Creates a new `Event` with a tag type.
     ///
     /// # Examples
     ///
     /// ```
     /// use event_listener::Event;
     ///
-    /// let event = Event::new();
+    /// let event = Event::<usize>::with_tag();
     /// ```
     #[inline]
-    pub const fn new() -> Self {
+    pub const fn with_tag() -> Self {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
         }
@@ -214,7 +219,7 @@ impl Event {
     /// let listener = event.listen();
     /// ```
     #[cold]
-    pub fn listen(&self) -> Pin<Box<EventListener>> {
+    pub fn listen(&self) -> Pin<Box<EventListener<T>>> {
         let mut listener = Box::pin(EventListener::new(self));
         listener.as_mut().listen();
         listener
@@ -224,12 +229,15 @@ impl Event {
     ///
     /// The number is allowed to be zero or exceed the current number of listeners.
     ///
-    /// In contrast to [`Event::notify_additional()`], this method only makes sure *at least* `n`
-    /// listeners among the active ones are notified.
+    /// The [`Notification`] trait is used to define what kind of notification is delivered.
+    /// The default implementation (implemented on `usize`) is a notification that only notifies
+    /// *at least* the specified number of listeners.
     ///
-    /// This method emits a `SeqCst` fence before notifying listeners.
+    /// In certain cases, this function emits a `SeqCst` fence before notifying listeners.
     ///
     /// # Examples
+    ///
+    /// Use the default notification strategy:
     ///
     /// ```
     /// use event_listener::Event;
@@ -249,39 +257,20 @@ impl Event {
     /// // get notified here since they start listening before `listener3`.
     /// event.notify(2);
     /// ```
-    #[inline]
-    pub fn notify(&self, n: usize) {
-        // Make sure the notification comes after whatever triggered it.
-        notify::full_fence();
-
-        if let Some(inner) = self.try_inner() {
-            // Notify if there is at least one unnotified listener and the number of notified
-            // listeners is less than `n`.
-            if inner.notified.load(Ordering::Acquire) < n {
-                inner.notify(n, false);
-            }
-        }
-    }
-
-    /// Notifies a number of active listeners without emitting a `SeqCst` fence.
     ///
-    /// The number is allowed to be zero or exceed the current number of listeners.
+    /// Notify without emitting a `SeqCst` fence. This uses the [`relaxed`] notification strategy.
+    /// This is equivalent to calling [`Event::notify_relaxed()`].
     ///
-    /// In contrast to [`Event::notify_additional()`], this method only makes sure *at least* `n`
-    /// listeners among the active ones are notified.
-    ///
-    /// Unlike [`Event::notify()`], this method does not emit a `SeqCst` fence.
-    ///
-    /// # Examples
+    /// [`relaxed`]: IntoNotification::relaxed
     ///
     /// ```
-    /// use event_listener::Event;
+    /// use event_listener::{prelude::*, Event};
     /// use std::sync::atomic::{self, Ordering};
     ///
     /// let event = Event::new();
     ///
     /// // This notification gets lost because there are no listeners.
-    /// event.notify(1);
+    /// event.notify(1.relaxed());
     ///
     /// let listener1 = event.listen();
     /// let listener2 = event.listen();
@@ -294,17 +283,193 @@ impl Event {
     /// //
     /// // Listener queueing is fair, which means `listener1` and `listener2`
     /// // get notified here since they start listening before `listener3`.
-    /// event.notify(2);
+    /// event.notify(2.relaxed());
+    /// ```
+    ///
+    /// Notify additional listeners. In contrast to [`Event::notify()`], this method will notify `n`
+    /// *additional* listeners that were previously unnotified. This uses the [`additional`]
+    /// notification strategy. This is equivalent to calling [`Event::notify_additional()`].
+    ///
+    /// [`additional`]: IntoNotification::additional
+    ///
+    /// ```
+    /// use event_listener::{prelude::*, Event};
+    ///
+    /// let event = Event::new();
+    ///
+    /// // This notification gets lost because there are no listeners.
+    /// event.notify(1.additional());
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    /// let listener3 = event.listen();
+    ///
+    /// // Notifies two listeners.
+    /// //
+    /// // Listener queueing is fair, which means `listener1` and `listener2`
+    /// // get notified here since they start listening before `listener3`.
+    /// event.notify(1.additional());
+    /// event.notify(1.additional());
+    /// ```
+    ///
+    /// Notifies with the [`additional`] and [`relaxed`] strategies at the same time. This is
+    /// equivalent to calling [`Event::notify_additional_relaxed()`].
+    ///
+    /// ```
+    /// use event_listener::{prelude::*, Event};
+    /// use std::sync::atomic::{self, Ordering};
+    ///
+    /// let event = Event::new();
+    ///
+    /// // This notification gets lost because there are no listeners.
+    /// event.notify(1.additional().relaxed());
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    /// let listener3 = event.listen();
+    ///
+    /// // We should emit a fence manually when using relaxed notifications.
+    /// atomic::fence(Ordering::SeqCst);
+    ///
+    /// // Notifies two listeners.
+    /// //
+    /// // Listener queueing is fair, which means `listener1` and `listener2`
+    /// // get notified here since they start listening before `listener3`.
+    /// event.notify(1.additional().relaxed());
+    /// event.notify(1.additional().relaxed());
+    /// ```
+    #[inline]
+    pub fn notify(&self, notify: impl IntoNotification<Tag = T>) {
+        let notify = notify.into_notification();
+
+        // Make sure the notification comes after whatever triggered it.
+        notify.fence();
+
+        if let Some(inner) = self.try_inner() {
+            let limit = if notify.is_additional() {
+                usize::MAX
+            } else {
+                notify.count()
+            };
+
+            // Notify if there is at least one unnotified listener and the number of notified
+            // listeners is less than `limit`.
+            if inner.notified.load(Ordering::Acquire) < limit {
+                inner.notify(notify);
+            }
+        }
+    }
+
+    /// Return a reference to the inner state if it has been initialized.
+    #[inline]
+    fn try_inner(&self) -> Option<&Inner<T>> {
+        let inner = self.inner.load(Ordering::Acquire);
+        unsafe { inner.as_ref() }
+    }
+
+    /// Returns a raw, initialized pointer to the inner state.
+    ///
+    /// This returns a raw pointer instead of reference because `from_raw`
+    /// requires raw/mut provenance: <https://github.com/rust-lang/rust/pull/67339>.
+    fn inner(&self) -> *const Inner<T> {
+        let mut inner = self.inner.load(Ordering::Acquire);
+
+        // If this is the first use, initialize the state.
+        if inner.is_null() {
+            // Allocate the state on the heap.
+            let new = Arc::new(Inner::<T>::new());
+
+            // Convert the state to a raw pointer.
+            let new = Arc::into_raw(new) as *mut Inner<T>;
+
+            // Replace the null pointer with the new state pointer.
+            inner = self
+                .inner
+                .compare_exchange(inner, new, Ordering::AcqRel, Ordering::Acquire)
+                .unwrap_or_else(|x| x);
+
+            // Check if the old pointer value was indeed null.
+            if inner.is_null() {
+                // If yes, then use the new state pointer.
+                inner = new;
+            } else {
+                // If not, that means a concurrent operation has initialized the state.
+                // In that case, use the old pointer and deallocate the new one.
+                unsafe {
+                    drop(Arc::from_raw(new));
+                }
+            }
+        }
+
+        inner
+    }
+}
+
+impl Event<()> {
+    /// Creates a new [`Event`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    /// ```
+    #[inline]
+    pub const fn new() -> Self {
+        Self::with_tag()
+    }
+
+    /// Notifies a number of active listeners without emitting a `SeqCst` fence.
+    ///
+    /// The number is allowed to be zero or exceed the current number of listeners.
+    ///
+    /// In contrast to [`Event::notify_additional()`], this method only makes sure *at least* `n`
+    /// listeners among the active ones are notified.
+    ///
+    /// Unlike [`Event::notify()`], this method does not emit a `SeqCst` fence.
+    ///
+    /// This method only works for untagged events. In other cases, it is recommended to instead
+    /// use [`Event::notify()`] like so:
+    ///
+    /// ```
+    /// use event_listener::{prelude::*, Event};
+    /// let event = Event::new();
+    ///
+    /// // Old way:
+    /// event.notify_relaxed(1);
+    ///
+    /// // New way:
+    /// event.notify(1.relaxed());
+    /// ```
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    /// use std::sync::atomic::{self, Ordering};
+    ///
+    /// let event = Event::new();
+    ///
+    /// // This notification gets lost because there are no listeners.
+    /// event.notify_relaxed(1);
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    /// let listener3 = event.listen();
+    ///
+    /// // We should emit a fence manually when using relaxed notifications.
+    /// atomic::fence(Ordering::SeqCst);
+    ///
+    /// // Notifies two listeners.
+    /// //
+    /// // Listener queueing is fair, which means `listener1` and `listener2`
+    /// // get notified here since they start listening before `listener3`.
+    /// event.notify_relaxed(2);
     /// ```
     #[inline]
     pub fn notify_relaxed(&self, n: usize) {
-        if let Some(inner) = self.try_inner() {
-            // Notify if there is at least one unnotified listener and the number of notified
-            // listeners is less than `n`.
-            if inner.notified.load(Ordering::Acquire) < n {
-                inner.notify(n, true);
-            }
-        }
+        self.notify(n.relaxed())
     }
 
     /// Notifies a number of active and still unnotified listeners.
@@ -316,6 +481,20 @@ impl Event {
     ///
     /// This method emits a `SeqCst` fence before notifying listeners.
     ///
+    /// This method only works for untagged events. In other cases, it is recommended to instead
+    /// use [`Event::notify()`] like so:
+    ///
+    /// ```
+    /// use event_listener::{prelude::*, Event};
+    /// let event = Event::new();
+    ///
+    /// // Old way:
+    /// event.notify_additional(1);
+    ///
+    /// // New way:
+    /// event.notify(1.additional());
+    /// ```
+    ///
     /// # Examples
     ///
     /// ```
@@ -324,7 +503,7 @@ impl Event {
     /// let event = Event::new();
     ///
     /// // This notification gets lost because there are no listeners.
-    /// event.notify(1);
+    /// event.notify_additional(1);
     ///
     /// let listener1 = event.listen();
     /// let listener2 = event.listen();
@@ -339,15 +518,7 @@ impl Event {
     /// ```
     #[inline]
     pub fn notify_additional(&self, n: usize) {
-        // Make sure the notification comes after whatever triggered it.
-        notify::full_fence();
-
-        if let Some(inner) = self.try_inner() {
-            // Notify if there is at least one unnotified listener.
-            if inner.notified.load(Ordering::Acquire) < core::usize::MAX {
-                inner.notify(n, true);
-            }
-        }
+        self.notify(n.additional())
     }
 
     /// Notifies a number of active and still unnotified listeners without emitting a `SeqCst`
@@ -359,6 +530,20 @@ impl Event {
     /// were previously unnotified.
     ///
     /// Unlike [`Event::notify_additional()`], this method does not emit a `SeqCst` fence.
+    ///
+    /// This method only works for untagged events. In other cases, it is recommended to instead
+    /// use [`Event::notify()`] like so:
+    ///
+    /// ```
+    /// use event_listener::{prelude::*, Event};
+    /// let event = Event::new();
+    ///
+    /// // Old way:
+    /// event.notify_additional_relaxed(1);
+    ///
+    /// // New way:
+    /// event.notify(1.additional().relaxed());
+    /// ```
     ///
     /// # Examples
     ///
@@ -387,60 +572,11 @@ impl Event {
     /// ```
     #[inline]
     pub fn notify_additional_relaxed(&self, n: usize) {
-        if let Some(inner) = self.try_inner() {
-            // Notify if there is at least one unnotified listener.
-            if inner.notified.load(Ordering::Acquire) < core::usize::MAX {
-                inner.notify(n, true);
-            }
-        }
-    }
-
-    /// Return a reference to the inner state if it has been initialized.
-    #[inline]
-    fn try_inner(&self) -> Option<&Inner> {
-        let inner = self.inner.load(Ordering::Acquire);
-        unsafe { inner.as_ref() }
-    }
-
-    /// Returns a raw, initialized pointer to the inner state.
-    ///
-    /// This returns a raw pointer instead of reference because `from_raw`
-    /// requires raw/mut provenance: <https://github.com/rust-lang/rust/pull/67339>.
-    fn inner(&self) -> *const Inner {
-        let mut inner = self.inner.load(Ordering::Acquire);
-
-        // If this is the first use, initialize the state.
-        if inner.is_null() {
-            // Allocate the state on the heap.
-            let new = Arc::new(Inner::new());
-
-            // Convert the state to a raw pointer.
-            let new = Arc::into_raw(new) as *mut Inner;
-
-            // Replace the null pointer with the new state pointer.
-            inner = self
-                .inner
-                .compare_exchange(inner, new, Ordering::AcqRel, Ordering::Acquire)
-                .unwrap_or_else(|x| x);
-
-            // Check if the old pointer value was indeed null.
-            if inner.is_null() {
-                // If yes, then use the new state pointer.
-                inner = new;
-            } else {
-                // If not, that means a concurrent operation has initialized the state.
-                // In that case, use the old pointer and deallocate the new one.
-                unsafe {
-                    drop(Arc::from_raw(new));
-                }
-            }
-        }
-
-        inner
+        self.notify(n.additional().relaxed())
     }
 }
 
-impl Drop for Event {
+impl<T> Drop for Event<T> {
     #[inline]
     fn drop(&mut self) {
         self.inner.with_mut(|&mut inner| {
@@ -464,17 +600,17 @@ impl Drop for Event {
 /// If a notified listener is dropped without receiving a notification, dropping will notify
 /// another active listener. Whether one *additional* listener will be notified depends on what
 /// kind of notification was delivered.
-pub struct EventListener(Listener<Arc<Inner>>);
+pub struct EventListener<T: Unpin = ()>(Listener<T, Arc<Inner<T>>>);
 
-impl fmt::Debug for EventListener {
+impl<T: Unpin> fmt::Debug for EventListener<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("EventListener { .. }")
     }
 }
 
-impl EventListener {
+impl<T: Unpin> EventListener<T> {
     /// Create a new `EventListener` that will wait for a notification from the given [`Event`].
-    pub fn new(event: &Event) -> Self {
+    pub fn new(event: &Event<T>) -> Self {
         let inner = event.inner();
 
         let listener = Listener {
@@ -514,8 +650,8 @@ impl EventListener {
     /// listener.as_mut().wait();
     /// ```
     #[cfg(feature = "std")]
-    pub fn wait(self: Pin<&mut Self>) {
-        self.listener().wait_internal(None);
+    pub fn wait(self: Pin<&mut Self>) -> T {
+        self.listener().wait_internal(None).unwrap()
     }
 
     /// Blocks until a notification is received or a timeout is reached.
@@ -532,10 +668,10 @@ impl EventListener {
     /// let mut listener = event.listen();
     ///
     /// // There are no notification so this times out.
-    /// assert!(!listener.as_mut().wait_timeout(Duration::from_secs(1)));
+    /// assert!(listener.as_mut().wait_timeout(Duration::from_secs(1)).is_none());
     /// ```
     #[cfg(feature = "std")]
-    pub fn wait_timeout(self: Pin<&mut Self>, timeout: Duration) -> bool {
+    pub fn wait_timeout(self: Pin<&mut Self>, timeout: Duration) -> Option<T> {
         self.listener()
             .wait_internal(Instant::now().checked_add(timeout))
     }
@@ -554,10 +690,10 @@ impl EventListener {
     /// let mut listener = event.listen();
     ///
     /// // There are no notification so this times out.
-    /// assert!(!listener.as_mut().wait_deadline(Instant::now() + Duration::from_secs(1)));
+    /// assert!(listener.as_mut().wait_deadline(Instant::now() + Duration::from_secs(1)).is_none());
     /// ```
     #[cfg(feature = "std")]
-    pub fn wait_deadline(self: Pin<&mut Self>, deadline: Instant) -> bool {
+    pub fn wait_deadline(self: Pin<&mut Self>, deadline: Instant) -> Option<T> {
         self.listener().wait_internal(Some(deadline))
     }
 
@@ -596,8 +732,8 @@ impl EventListener {
     /// assert!(listener.listens_to(&event));
     /// ```
     #[inline]
-    pub fn listens_to(&self, event: &Event) -> bool {
-        ptr::eq::<Inner>(&**self.inner(), event.inner.load(Ordering::Acquire))
+    pub fn listens_to(&self, event: &Event<T>) -> bool {
+        ptr::eq::<Inner<T>>(&**self.inner(), event.inner.load(Ordering::Acquire))
     }
 
     /// Returns `true` if both listeners listen to the same `Event`.
@@ -613,44 +749,44 @@ impl EventListener {
     ///
     /// assert!(listener1.same_event(&listener2));
     /// ```
-    pub fn same_event(&self, other: &EventListener) -> bool {
-        ptr::eq::<Inner>(&**self.inner(), &**other.inner())
+    pub fn same_event(&self, other: &EventListener<T>) -> bool {
+        ptr::eq::<Inner<T>>(&**self.inner(), &**other.inner())
     }
 
-    fn listener(self: Pin<&mut Self>) -> Pin<&mut Listener<Arc<Inner>>> {
+    fn listener(self: Pin<&mut Self>) -> Pin<&mut Listener<T, Arc<Inner<T>>>> {
         unsafe { self.map_unchecked_mut(|this| &mut this.0) }
     }
 
-    fn inner(&self) -> &Arc<Inner> {
+    fn inner(&self) -> &Arc<Inner<T>> {
         &self.0.event
     }
 }
 
-impl Future for EventListener {
-    type Output = ();
+impl<T: Unpin> Future for EventListener<T> {
+    type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.listener().poll_internal(cx)
     }
 }
 
-struct Listener<B: Deref<Target = Inner> + Unpin> {
+struct Listener<T: Unpin, B: Deref<Target = Inner<T>> + Unpin> {
     /// The reference to the original event.
     event: B,
 
     /// The inner state of the listener.
-    listener: Option<sys::Listener>,
+    listener: Option<sys::Listener<T>>,
 
     /// Enforce pinning.
     _pin: PhantomPinned,
 }
 
-unsafe impl<B: Deref<Target = Inner> + Unpin + Send> Send for Listener<B> {}
-unsafe impl<B: Deref<Target = Inner> + Unpin + Sync> Sync for Listener<B> {}
+unsafe impl<T: Send + Unpin, B: Deref<Target = Inner<T>> + Unpin + Send> Send for Listener<T, B> {}
+unsafe impl<T: Send + Unpin, B: Deref<Target = Inner<T>> + Unpin + Sync> Sync for Listener<T, B> {}
 
-impl<B: Deref<Target = Inner> + Unpin> Listener<B> {
+impl<T: Unpin, B: Deref<Target = Inner<T>> + Unpin> Listener<T, B> {
     /// Pin-project this listener.
-    fn project(self: Pin<&mut Self>) -> (&Inner, Pin<&mut Option<sys::Listener>>) {
+    fn project(self: Pin<&mut Self>) -> (&Inner<T>, Pin<&mut Option<sys::Listener<T>>>) {
         // SAFETY: `event` is `Unpin`, and `listener`'s pin status is preserved
         unsafe {
             let Listener {
@@ -669,7 +805,7 @@ impl<B: Deref<Target = Inner> + Unpin> Listener<B> {
 
     /// Wait until the provided deadline.
     #[cfg(feature = "std")]
-    fn wait_internal(mut self: Pin<&mut Self>, deadline: Option<Instant>) -> bool {
+    fn wait_internal(mut self: Pin<&mut Self>, deadline: Option<Instant>) -> Option<T> {
         use std::cell::RefCell;
 
         std::thread_local! {
@@ -708,24 +844,13 @@ impl<B: Deref<Target = Inner> + Unpin> Listener<B> {
         deadline: Option<Instant>,
         parker: &Parker,
         unparker: TaskRef<'_>,
-    ) -> bool {
+    ) -> Option<T> {
         let (inner, mut listener) = self.project();
 
         // Set the listener's state to `Task`.
-        match inner.register(listener.as_mut(), unparker) {
-            Some(true) => {
-                // We were already notified, so we don't need to park.
-                return true;
-            }
-
-            Some(false) => {
-                // We're now waiting for a notification.
-            }
-
-            None => {
-                // We were never inserted into the list.
-                panic!("listener was never inserted into the list");
-            }
+        if let Some(tag) = inner.register(listener.as_mut(), unparker).notified() {
+            // We were already notified, so we don't need to park.
+            return Some(tag);
         }
 
         // Wait until a notification is received or the timeout is reached.
@@ -741,17 +866,14 @@ impl<B: Deref<Target = Inner> + Unpin> Listener<B> {
                         return inner
                             .remove(listener, false)
                             .expect("We never removed ourself from the list")
-                            .is_notified();
+                            .notified();
                     }
                 }
             }
 
             // See if we were notified.
-            if inner
-                .register(listener.as_mut(), unparker)
-                .expect("We never removed ourself from the list")
-            {
-                return true;
+            if let Some(tag) = inner.register(listener.as_mut(), unparker).notified() {
+                return Some(tag);
             }
         }
     }
@@ -767,30 +889,28 @@ impl<B: Deref<Target = Inner> + Unpin> Listener<B> {
     }
 
     /// Poll this listener for a notification.
-    fn poll_internal(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+    fn poll_internal(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
         let (inner, mut listener) = self.project();
 
         // Try to register the listener.
-        match inner.register(listener.as_mut(), TaskRef::Waker(cx.waker())) {
-            Some(true) => {
+        match inner
+            .register(listener.as_mut(), TaskRef::Waker(cx.waker()))
+            .notified()
+        {
+            Some(tag) => {
                 // We were already notified, so we don't need to park.
-                Poll::Ready(())
-            }
-
-            Some(false) => {
-                // We're now waiting for a notification.
-                Poll::Pending
+                Poll::Ready(tag)
             }
 
             None => {
-                // We were never inserted into the list.
-                panic!("listener was never inserted into the list");
+                // We're now waiting for a notification.
+                Poll::Pending
             }
         }
     }
 }
 
-impl<B: Deref<Target = Inner> + Unpin> Drop for Listener<B> {
+impl<T: Unpin, B: Deref<Target = Inner<T>> + Unpin> Drop for Listener<T, B> {
     fn drop(&mut self) {
         // If we're being dropped, we need to remove ourself from the list.
         let (inner, listener) = unsafe { Pin::new_unchecked(self).project() };
@@ -801,14 +921,20 @@ impl<B: Deref<Target = Inner> + Unpin> Drop for Listener<B> {
 
 /// The state of a listener.
 #[derive(Debug, PartialEq)]
-enum State {
+enum State<T> {
     /// The listener was just created.
     Created,
 
     /// The listener has received a notification.
     ///
     /// The `bool` is `true` if this was an "additional" notification.
-    Notified(bool),
+    Notified {
+        /// Whether or not this is an "additional" notification.
+        additional: bool,
+
+        /// The tag associated with the notification.
+        tag: T,
+    },
 
     /// A task is waiting for a notification.
     Task(Task),
@@ -817,9 +943,44 @@ enum State {
     NotifiedTaken,
 }
 
-impl State {
+impl<T> State<T> {
     fn is_notified(&self) -> bool {
-        matches!(self, Self::Notified(_) | Self::NotifiedTaken)
+        matches!(self, Self::Notified { .. } | Self::NotifiedTaken)
+    }
+
+    /// If this state was notified, return the tag associated with the notification.
+    fn notified(self) -> Option<T> {
+        match self {
+            Self::Notified { tag, .. } => Some(tag),
+            Self::NotifiedTaken => panic!("listener was already notified but taken"),
+            _ => None,
+        }
+    }
+}
+
+/// The result of registering a listener.
+#[derive(Debug, PartialEq)]
+enum RegisterResult<T> {
+    /// The listener was already notified.
+    Notified(T),
+
+    /// The listener has been registered.
+    Registered,
+
+    /// The listener was never inserted into the list.
+    NeverInserted,
+}
+
+impl<T> RegisterResult<T> {
+    /// Whether or not the listener was notified.
+    ///
+    /// Panics if the listener was never inserted into the list.
+    fn notified(self) -> Option<T> {
+        match self {
+            Self::Notified(tag) => Some(tag),
+            Self::Registered => None,
+            Self::NeverInserted => panic!("listener was never inserted into the list"),
+        }
     }
 }
 

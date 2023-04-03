@@ -18,12 +18,14 @@ mod queue;
 use node::{Node, TaskWaiting};
 use queue::Queue;
 
+use crate::notify::{GenericNotify, Notification};
 use crate::sync::atomic::{AtomicBool, Ordering};
 use crate::sync::cell::{Cell, UnsafeCell};
 use crate::sync::Arc;
-use crate::{State, Task, TaskRef};
+use crate::{RegisterResult, State, Task, TaskRef};
 
 use core::fmt;
+use core::marker::PhantomData;
 use core::mem;
 use core::num::NonZeroUsize;
 use core::ops;
@@ -31,9 +33,9 @@ use core::pin::Pin;
 
 use alloc::vec::Vec;
 
-impl crate::Inner {
+impl<T: Unpin> crate::Inner<T> {
     /// Locks the list.
-    fn try_lock(&self) -> Option<ListGuard<'_>> {
+    fn try_lock(&self) -> Option<ListGuard<'_, T>> {
         self.list.inner.try_lock().map(|guard| ListGuard {
             inner: self,
             guard: Some(guard),
@@ -43,7 +45,7 @@ impl crate::Inner {
     /// Add a new listener to the list.
     ///
     /// Does nothing if the list is already registered.
-    pub(crate) fn insert(&self, mut listener: Pin<&mut Option<Listener>>) {
+    pub(crate) fn insert(&self, mut listener: Pin<&mut Option<Listener<T>>>) {
         if listener.as_ref().as_pin_ref().is_some() {
             // Already inserted.
             return;
@@ -67,9 +69,9 @@ impl crate::Inner {
     /// Remove a listener from the list.
     pub(crate) fn remove(
         &self,
-        mut listener: Pin<&mut Option<Listener>>,
+        mut listener: Pin<&mut Option<Listener<T>>>,
         propogate: bool,
-    ) -> Option<State> {
+    ) -> Option<State<T>> {
         let state = match listener.as_mut().take() {
             Some(Listener::HasNode(key)) => {
                 match self.try_lock() {
@@ -99,6 +101,8 @@ impl crate::Inner {
             }
 
             None => None,
+
+            _ => unreachable!(),
         };
 
         state
@@ -106,19 +110,47 @@ impl crate::Inner {
 
     /// Notifies a number of entries.
     #[cold]
-    pub(crate) fn notify(&self, n: usize, additional: bool) {
+    pub(crate) fn notify(&self, mut notify: impl Notification<Tag = T>) {
         match self.try_lock() {
             Some(mut guard) => {
                 // Notify the listeners.
-                guard.notify(n, additional);
+                guard.notify(notify);
             }
 
             None => {
                 // Push it to the queue.
-                let node = Node::Notify {
-                    count: n,
-                    additional,
-                };
+                let node = Node::Notify(GenericNotify::new(
+                    notify.count(),
+                    notify.is_additional(),
+                    {
+                        // Collect every tag we need.
+                        let mut tags = {
+                            let count = notify.count();
+                            let mut tags = Vec::with_capacity(count);
+                            for _ in 0..count {
+                                tags.push(notify.next_tag());
+                            }
+
+                            // Convert into an iterator.
+                            tags.into_iter()
+                        };
+
+                        // Function that iterates over the tags.
+                        let tags = Box::new(move || tags.next().unwrap());
+
+                        // SAFETY: The generic `GenericNotify` expects a `Box` that is `Send` and
+                        // `Sync`. The `tags` function is `Send` if `T` is `Send`, and `Sync` if `T`
+                        // is `Sync`. However, the end result (the `Event`) is `Send` and `Sync` if
+                        // `T` is `Send` and `Sync`, so we can safely assume that the `Box` is
+                        // going to be handled safely.
+                        //
+                        // This also works out lifetime wise, since the Box<dyn FnMut()> does not
+                        // outlive the `Event`.
+                        unsafe {
+                            mem::transmute::<Box<dyn FnMut() -> T>, node::GenericTags<T>>(tags)
+                        }
+                    },
+                ));
 
                 self.list.queue.push(node);
             }
@@ -131,9 +163,9 @@ impl crate::Inner {
     /// isn't inserted, returns `None`.
     pub(crate) fn register(
         &self,
-        mut listener: Pin<&mut Option<Listener>>,
+        mut listener: Pin<&mut Option<Listener<T>>>,
         task: TaskRef<'_>,
-    ) -> Option<bool> {
+    ) -> RegisterResult<T> {
         loop {
             match listener.as_mut().take() {
                 Some(Listener::HasNode(key)) => {
@@ -148,7 +180,7 @@ impl crate::Inner {
                             // Wait for the lock.
                             let node = Node::Waiting(task.into_task());
                             self.list.queue.push(node);
-                            return Some(false);
+                            return RegisterResult::Registered;
                         }
                     }
                 }
@@ -165,27 +197,29 @@ impl crate::Inner {
                             // We're still queued, so register the task.
                             task_waiting.register(task.into_task());
                             *listener = Some(Listener::Queued(task_waiting));
-                            return None;
+                            return RegisterResult::Registered;
                         }
                     }
                 }
 
-                _ => return None,
+                None => return RegisterResult::NeverInserted,
+
+                _ => unreachable!(),
             }
         }
     }
 }
 
-pub(crate) struct List {
+pub(crate) struct List<T> {
     /// The inner list.
-    inner: Mutex<ListenerSlab>,
+    inner: Mutex<ListenerSlab<T>>,
 
     /// The queue of pending operations.
-    queue: Queue,
+    queue: Queue<T>,
 }
 
-impl List {
-    pub(super) fn new() -> List {
+impl<T: Unpin> List<T> {
+    pub(super) fn new() -> List<T> {
         List {
             inner: Mutex::new(ListenerSlab::new()),
             queue: Queue::new(),
@@ -194,21 +228,21 @@ impl List {
 }
 
 /// The guard returned by [`Inner::lock`].
-pub(crate) struct ListGuard<'a> {
+pub(crate) struct ListGuard<'a, T: Unpin> {
     /// Reference to the inner state.
-    pub(crate) inner: &'a crate::Inner,
+    pub(crate) inner: &'a crate::Inner<T>,
 
     /// The locked list.
-    pub(crate) guard: Option<MutexGuard<'a, ListenerSlab>>,
+    pub(crate) guard: Option<MutexGuard<'a, ListenerSlab<T>>>,
 }
 
-impl ListGuard<'_> {
+impl<T: Unpin> ListGuard<'_, T> {
     #[cold]
     fn process_nodes_slow(
         &mut self,
-        start_node: Node,
+        start_node: Node<T>,
         tasks: &mut Vec<Task>,
-        guard: &mut MutexGuard<'_, ListenerSlab>,
+        guard: &mut MutexGuard<'_, ListenerSlab<T>>,
     ) {
         // Process the start node.
         tasks.extend(start_node.apply(guard));
@@ -220,21 +254,21 @@ impl ListGuard<'_> {
     }
 }
 
-impl ops::Deref for ListGuard<'_> {
-    type Target = ListenerSlab;
+impl<T: Unpin> ops::Deref for ListGuard<'_, T> {
+    type Target = ListenerSlab<T>;
 
     fn deref(&self) -> &Self::Target {
         self.guard.as_ref().unwrap()
     }
 }
 
-impl ops::DerefMut for ListGuard<'_> {
+impl<T: Unpin> ops::DerefMut for ListGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.guard.as_mut().unwrap()
     }
 }
 
-impl Drop for ListGuard<'_> {
+impl<T: Unpin> Drop for ListGuard<'_, T> {
     fn drop(&mut self) {
         let Self { inner, guard } = self;
         let mut list = guard.take().unwrap();
@@ -267,11 +301,11 @@ impl Drop for ListGuard<'_> {
 }
 
 /// An entry representing a registered listener.
-enum Entry {
+enum Entry<T> {
     /// Contains the listener state.
     Listener {
         /// The state of the listener.
-        state: Cell<State>,
+        state: Cell<State<T>>,
 
         /// The previous listener in the list.
         prev: Cell<Option<NonZeroUsize>>,
@@ -287,38 +321,38 @@ enum Entry {
     Sentinel,
 }
 
-struct TakenState<'a> {
-    slot: &'a Cell<State>,
-    state: State,
+struct TakenState<'a, T> {
+    slot: &'a Cell<State<T>>,
+    state: State<T>,
 }
 
-impl Drop for TakenState<'_> {
+impl<T> Drop for TakenState<'_, T> {
     fn drop(&mut self) {
         self.slot
             .set(mem::replace(&mut self.state, State::NotifiedTaken));
     }
 }
 
-impl fmt::Debug for TakenState<'_> {
+impl<T: fmt::Debug> fmt::Debug for TakenState<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.state, f)
     }
 }
 
-impl PartialEq for TakenState<'_> {
+impl<T: PartialEq> PartialEq for TakenState<'_, T> {
     fn eq(&self, other: &Self) -> bool {
         self.state == other.state
     }
 }
 
-impl<'a> TakenState<'a> {
-    fn new(slot: &'a Cell<State>) -> Self {
+impl<'a, T> TakenState<'a, T> {
+    fn new(slot: &'a Cell<State<T>>) -> Self {
         let state = slot.replace(State::NotifiedTaken);
         Self { slot, state }
     }
 }
 
-impl fmt::Debug for Entry {
+impl<T: fmt::Debug> fmt::Debug for Entry<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Entry::Listener { state, next, prev } => f
@@ -333,8 +367,8 @@ impl fmt::Debug for Entry {
     }
 }
 
-impl PartialEq for Entry {
-    fn eq(&self, other: &Entry) -> bool {
+impl<T: PartialEq> PartialEq for Entry<T> {
+    fn eq(&self, other: &Entry<T>) -> bool {
         match (self, other) {
             (
                 Self::Listener {
@@ -361,8 +395,8 @@ impl PartialEq for Entry {
     }
 }
 
-impl Entry {
-    fn state(&self) -> &Cell<State> {
+impl<T> Entry<T> {
+    fn state(&self) -> &Cell<State<T>> {
         match self {
             Entry::Listener { state, .. } => state,
             _ => unreachable!(),
@@ -385,9 +419,9 @@ impl Entry {
 }
 
 /// A linked list of entries.
-pub(crate) struct ListenerSlab {
+pub(crate) struct ListenerSlab<T> {
     /// The raw list of entries.
-    listeners: Vec<Entry>,
+    listeners: Vec<Entry<T>>,
 
     /// First entry in the list.
     head: Option<NonZeroUsize>,
@@ -409,7 +443,7 @@ pub(crate) struct ListenerSlab {
     first_empty: NonZeroUsize,
 }
 
-impl ListenerSlab {
+impl<T: Unpin> ListenerSlab<T> {
     /// Create a new, empty list.
     pub(crate) fn new() -> Self {
         Self {
@@ -424,7 +458,7 @@ impl ListenerSlab {
     }
 
     /// Inserts a new entry into the list.
-    pub(crate) fn insert(&mut self, state: State) -> NonZeroUsize {
+    pub(crate) fn insert(&mut self, state: State<T>) -> NonZeroUsize {
         // Add the new entry into the list.
         let key = {
             let entry = Entry::Listener {
@@ -476,7 +510,7 @@ impl ListenerSlab {
     }
 
     /// Removes an entry from the list and returns its state.
-    pub(crate) fn remove(&mut self, key: NonZeroUsize, propogate: bool) -> Option<State> {
+    pub(crate) fn remove(&mut self, key: NonZeroUsize, propogate: bool) -> Option<State<T>> {
         let entry = &self.listeners[key.get()];
         let prev = entry.prev().get();
         let next = entry.next().get();
@@ -505,7 +539,7 @@ impl ListenerSlab {
         );
         self.first_empty = key;
 
-        let state = match entry {
+        let mut state = match entry {
             Entry::Listener { state, .. } => state.into_inner(),
             _ => unreachable!(),
         };
@@ -516,8 +550,15 @@ impl ListenerSlab {
 
             if propogate {
                 // Propogate the notification to the next entry.
-                if let State::Notified(additional) = state {
-                    self.notify(1, additional);
+                let state = mem::replace(&mut state, State::NotifiedTaken);
+                if let State::Notified { tag, additional } = state {
+                    let tags = {
+                        let mut tag = Some(tag);
+
+                        move || tag.take().expect("called more than once")
+                    };
+
+                    self.notify(GenericNotify::new(1, additional, tags));
                 }
             }
         }
@@ -528,8 +569,10 @@ impl ListenerSlab {
 
     /// Notifies a number of listeners.
     #[cold]
-    pub(crate) fn notify(&mut self, mut n: usize, additional: bool) {
-        if !additional {
+    pub(crate) fn notify(&mut self, mut notify: impl Notification<Tag = T>) {
+        let mut n = notify.count();
+        let is_additional = notify.is_additional();
+        if !is_additional {
             // Make sure we're not notifying more than we have.
             if n <= self.notified {
                 return;
@@ -550,7 +593,11 @@ impl ListenerSlab {
                     self.start = entry.next().get();
 
                     // Set the state to `Notified` and notify.
-                    if let State::Task(task) = entry.state().replace(State::Notified(additional)) {
+                    let tag = notify.next_tag();
+                    if let State::Task(task) = entry.state().replace(State::Notified {
+                        tag,
+                        additional: is_additional,
+                    }) {
                         task.wake();
                     }
 
@@ -567,23 +614,23 @@ impl ListenerSlab {
     /// isn't inserted, returns `None`.
     pub(crate) fn register(
         &mut self,
-        mut listener: Pin<&mut Option<Listener>>,
+        mut listener: Pin<&mut Option<Listener<T>>>,
         task: TaskRef<'_>,
-    ) -> Option<bool> {
+    ) -> RegisterResult<T> {
         let key = match *listener {
             Some(Listener::HasNode(key)) => key,
-            _ => return None,
+            _ => return RegisterResult::NeverInserted,
         };
 
         let entry = &self.listeners[key.get()];
 
         // Take the state out and check it.
         match entry.state().replace(State::NotifiedTaken) {
-            State::Notified(_) | State::NotifiedTaken => {
+            State::Notified { tag, .. } => {
                 // The listener was already notified, so we don't need to do anything.
-                self.remove(key, false)?;
+                self.remove(key, false);
                 *listener = None;
-                Some(true)
+                RegisterResult::Notified(tag)
             }
 
             State::Task(other_task) => {
@@ -594,28 +641,31 @@ impl ListenerSlab {
                     entry.state().set(State::Task(task.into_task()));
                 }
 
-                Some(false)
+                RegisterResult::Registered
             }
 
             _ => {
                 // Register the task.
                 entry.state().set(State::Task(task.into_task()));
-                Some(false)
+                RegisterResult::Registered
             }
         }
     }
 }
 
 #[derive(Debug)]
-pub(crate) enum Listener {
+pub(crate) enum Listener<T> {
     /// The listener has a node inside of the linked list.
     HasNode(NonZeroUsize),
 
     /// The listener has an entry in the queue that may or may not have a task waiting.
     Queued(Arc<TaskWaiting>),
+
+    /// Eat the lifetime for consistency.
+    _EatLifetime(PhantomData<T>),
 }
 
-impl PartialEq for Listener {
+impl<T> PartialEq for Listener<T> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::HasNode(a), Self::HasNode(b)) => a == b,
@@ -735,7 +785,7 @@ mod tests {
 
     #[test]
     fn smoke_listener_slab() {
-        let mut listeners = ListenerSlab::new();
+        let mut listeners = ListenerSlab::<()>::new();
 
         // Insert a few listeners.
         let key1 = listeners.insert(State::Created);
@@ -816,7 +866,7 @@ mod tests {
         let key3 = listeners.insert(State::Created);
 
         // Notify one.
-        listeners.notify(1, true);
+        listeners.notify(GenericNotify::new(1, true, || ()));
 
         assert_eq!(listeners.len, 3);
         assert_eq!(listeners.notified, 1);
@@ -828,7 +878,10 @@ mod tests {
         assert_eq!(
             listeners.listeners[1],
             Entry::Listener {
-                state: Cell::new(State::Notified(true)),
+                state: Cell::new(State::Notified {
+                    additional: true,
+                    tag: ()
+                }),
                 prev: Cell::new(None),
                 next: Cell::new(Some(key2)),
             }
@@ -851,7 +904,13 @@ mod tests {
         );
 
         // Remove the notified listener.
-        assert_eq!(listeners.remove(key1, false), Some(State::Notified(true)));
+        assert_eq!(
+            listeners.remove(key1, false),
+            Some(State::Notified {
+                additional: true,
+                tag: ()
+            })
+        );
 
         assert_eq!(listeners.len, 2);
         assert_eq!(listeners.notified, 0);
@@ -903,7 +962,7 @@ mod tests {
                 Pin::new(&mut Some(Listener::HasNode(key2))),
                 TaskRef::Waker(&waker)
             ),
-            Some(false)
+            RegisterResult::Registered
         );
 
         assert_eq!(listeners.len, 3);
@@ -939,7 +998,7 @@ mod tests {
         );
 
         // Notify the listener.
-        listeners.notify(2, false);
+        listeners.notify(GenericNotify::new(2, false, || ()));
 
         assert_eq!(listeners.len, 3);
         assert_eq!(listeners.notified, 2);
@@ -951,7 +1010,10 @@ mod tests {
         assert_eq!(
             listeners.listeners[1],
             Entry::Listener {
-                state: Cell::new(State::Notified(false)),
+                state: Cell::new(State::Notified {
+                    additional: false,
+                    tag: (),
+                }),
                 prev: Cell::new(None),
                 next: Cell::new(Some(key2)),
             }
@@ -959,7 +1021,10 @@ mod tests {
         assert_eq!(
             listeners.listeners[2],
             Entry::Listener {
-                state: Cell::new(State::Notified(false)),
+                state: Cell::new(State::Notified {
+                    additional: false,
+                    tag: (),
+                }),
                 prev: Cell::new(Some(key1)),
                 next: Cell::new(Some(key3)),
             }
@@ -979,7 +1044,7 @@ mod tests {
                 Pin::new(&mut Some(Listener::HasNode(key2))),
                 TaskRef::Waker(&waker)
             ),
-            Some(true)
+            RegisterResult::Notified(())
         );
     }
 
@@ -1004,7 +1069,7 @@ mod tests {
                 Pin::new(&mut Some(Listener::HasNode(key2))),
                 TaskRef::Waker(&waker)
             ),
-            Some(false)
+            RegisterResult::Registered
         );
 
         assert_eq!(listeners.len, 3);
@@ -1040,7 +1105,7 @@ mod tests {
         );
 
         // Notify the first listener.
-        listeners.notify(1, false);
+        listeners.notify(GenericNotify::new(1, false, || ()));
 
         assert_eq!(listeners.len, 3);
         assert_eq!(listeners.notified, 1);
@@ -1052,7 +1117,10 @@ mod tests {
         assert_eq!(
             listeners.listeners[1],
             Entry::Listener {
-                state: Cell::new(State::Notified(false)),
+                state: Cell::new(State::Notified {
+                    additional: false,
+                    tag: (),
+                }),
                 prev: Cell::new(None),
                 next: Cell::new(Some(key2)),
             }
@@ -1075,7 +1143,7 @@ mod tests {
         );
 
         // Calling notify again should not change anything.
-        listeners.notify(1, false);
+        listeners.notify(GenericNotify::new(1, false, || ()));
 
         assert_eq!(listeners.len, 3);
         assert_eq!(listeners.notified, 1);
@@ -1087,7 +1155,10 @@ mod tests {
         assert_eq!(
             listeners.listeners[1],
             Entry::Listener {
-                state: Cell::new(State::Notified(false)),
+                state: Cell::new(State::Notified {
+                    additional: false,
+                    tag: (),
+                }),
                 prev: Cell::new(None),
                 next: Cell::new(Some(key2)),
             }
@@ -1110,7 +1181,13 @@ mod tests {
         );
 
         // Remove the first listener.
-        assert_eq!(listeners.remove(key1, false), Some(State::Notified(false)));
+        assert_eq!(
+            listeners.remove(key1, false),
+            Some(State::Notified {
+                additional: false,
+                tag: ()
+            })
+        );
 
         assert_eq!(listeners.len, 2);
         assert_eq!(listeners.notified, 0);
@@ -1141,7 +1218,7 @@ mod tests {
         );
 
         // Notify the second listener.
-        listeners.notify(1, false);
+        listeners.notify(GenericNotify::new(1, false, || ()));
         assert!(woken.load(Ordering::SeqCst));
 
         assert_eq!(listeners.len, 2);
@@ -1158,7 +1235,10 @@ mod tests {
         assert_eq!(
             listeners.listeners[2],
             Entry::Listener {
-                state: Cell::new(State::Notified(false)),
+                state: Cell::new(State::Notified {
+                    additional: false,
+                    tag: (),
+                }),
                 prev: Cell::new(None),
                 next: Cell::new(Some(key3)),
             }
@@ -1173,7 +1253,7 @@ mod tests {
         );
 
         // Remove and propogate the second listener.
-        assert_eq!(listeners.remove(key2, true), Some(State::Notified(false)));
+        assert_eq!(listeners.remove(key2, true), Some(State::NotifiedTaken));
 
         // The third listener should be notified.
         assert_eq!(listeners.len, 1);
@@ -1194,14 +1274,23 @@ mod tests {
         assert_eq!(
             listeners.listeners[3],
             Entry::Listener {
-                state: Cell::new(State::Notified(false)),
+                state: Cell::new(State::Notified {
+                    additional: false,
+                    tag: (),
+                }),
                 prev: Cell::new(None),
                 next: Cell::new(None),
             }
         );
 
         // Remove the third listener.
-        assert_eq!(listeners.remove(key3, false), Some(State::Notified(false)));
+        assert_eq!(
+            listeners.remove(key3, false),
+            Some(State::Notified {
+                additional: false,
+                tag: ()
+            })
+        );
     }
 
     #[test]
@@ -1231,34 +1320,34 @@ mod tests {
         });
         assert_eq!(
             inner.register(Pin::new(&mut listener2), TaskRef::Waker(&waker)),
-            Some(false)
+            RegisterResult::Registered
         );
 
         // Notify the first listener.
-        inner.notify(1, false);
+        inner.notify(GenericNotify::new(1, false, || ()));
         assert!(!woken.load(Ordering::SeqCst));
 
         // Another notify should do nothing.
-        inner.notify(1, false);
+        inner.notify(GenericNotify::new(1, false, || ()));
         assert!(!woken.load(Ordering::SeqCst));
 
         // Receive the notification.
         assert_eq!(
             inner.register(Pin::new(&mut listener1), TaskRef::Waker(&waker)),
-            Some(true)
+            RegisterResult::Notified(())
         );
 
         // First listener is already removed.
         assert!(listener1.is_none());
 
         // Notify the second listener.
-        inner.notify(1, false);
+        inner.notify(GenericNotify::new(1, false, || ()));
         assert!(woken.load(Ordering::SeqCst));
 
         // Remove the second listener and propogate the notification.
         assert_eq!(
             inner.remove(Pin::new(&mut listener2), true),
-            Some(State::Notified(false))
+            Some(State::NotifiedTaken)
         );
 
         // Second listener is already removed.
@@ -1267,7 +1356,7 @@ mod tests {
         // Third listener should be notified.
         assert_eq!(
             inner.register(Pin::new(&mut listener3), TaskRef::Waker(&waker)),
-            Some(true)
+            RegisterResult::Notified(())
         );
     }
 }
