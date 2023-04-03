@@ -52,7 +52,7 @@ pub(crate) struct TaskWaiting {
     entry_id: AtomicUsize,
 }
 
-impl<T: Unpin> Node<T> {
+impl<T> Node<T> {
     pub(crate) fn listener() -> (Self, Arc<TaskWaiting>) {
         // Create a new `TaskWaiting` structure.
         let task_waiting = Arc::new(TaskWaiting {

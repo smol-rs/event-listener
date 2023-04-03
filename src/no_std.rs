@@ -31,9 +31,10 @@ use core::num::NonZeroUsize;
 use core::ops;
 use core::pin::Pin;
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-impl<T: Unpin> crate::Inner<T> {
+impl<T> crate::Inner<T> {
     /// Locks the list.
     fn try_lock(&self) -> Option<ListGuard<'_, T>> {
         self.list.inner.try_lock().map(|guard| ListGuard {
@@ -218,7 +219,7 @@ pub(crate) struct List<T> {
     queue: Queue<T>,
 }
 
-impl<T: Unpin> List<T> {
+impl<T> List<T> {
     pub(super) fn new() -> List<T> {
         List {
             inner: Mutex::new(ListenerSlab::new()),
@@ -228,7 +229,7 @@ impl<T: Unpin> List<T> {
 }
 
 /// The guard returned by [`Inner::lock`].
-pub(crate) struct ListGuard<'a, T: Unpin> {
+pub(crate) struct ListGuard<'a, T> {
     /// Reference to the inner state.
     pub(crate) inner: &'a crate::Inner<T>,
 
@@ -236,7 +237,7 @@ pub(crate) struct ListGuard<'a, T: Unpin> {
     pub(crate) guard: Option<MutexGuard<'a, ListenerSlab<T>>>,
 }
 
-impl<T: Unpin> ListGuard<'_, T> {
+impl<T> ListGuard<'_, T> {
     #[cold]
     fn process_nodes_slow(
         &mut self,
@@ -254,7 +255,7 @@ impl<T: Unpin> ListGuard<'_, T> {
     }
 }
 
-impl<T: Unpin> ops::Deref for ListGuard<'_, T> {
+impl<T> ops::Deref for ListGuard<'_, T> {
     type Target = ListenerSlab<T>;
 
     fn deref(&self) -> &Self::Target {
@@ -262,13 +263,13 @@ impl<T: Unpin> ops::Deref for ListGuard<'_, T> {
     }
 }
 
-impl<T: Unpin> ops::DerefMut for ListGuard<'_, T> {
+impl<T> ops::DerefMut for ListGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.guard.as_mut().unwrap()
     }
 }
 
-impl<T: Unpin> Drop for ListGuard<'_, T> {
+impl<T> Drop for ListGuard<'_, T> {
     fn drop(&mut self) {
         let Self { inner, guard } = self;
         let mut list = guard.take().unwrap();
@@ -443,7 +444,7 @@ pub(crate) struct ListenerSlab<T> {
     first_empty: NonZeroUsize,
 }
 
-impl<T: Unpin> ListenerSlab<T> {
+impl<T> ListenerSlab<T> {
     /// Create a new, empty list.
     pub(crate) fn new() -> Self {
         Self {
@@ -664,6 +665,8 @@ pub(crate) enum Listener<T> {
     /// Eat the lifetime for consistency.
     _EatLifetime(PhantomData<T>),
 }
+
+impl<T> Unpin for Listener<T> {}
 
 impl<T> PartialEq for Listener<T> {
     fn eq(&self, other: &Self) -> bool {

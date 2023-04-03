@@ -323,8 +323,8 @@ macro_rules! impl_for_numeric_types {
             type Tag = ();
             type Notify = Notify;
 
+            #[allow(unused_comparisons)]
             fn into_notification(self) -> Self::Notify {
-                #[allow(unused_comparisons)]
                 if self < 0 {
                     panic!("negative notification count");
                 }

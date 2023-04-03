@@ -80,11 +80,11 @@ mod notify;
 
 use alloc::boxed::Box;
 
+use core::borrow::Borrow;
 use core::fmt;
 use core::future::Future;
 use core::marker::PhantomPinned;
 use core::mem::ManuallyDrop;
-use core::ops::Deref;
 use core::pin::Pin;
 use core::ptr;
 use core::task::{Context, Poll, Waker};
@@ -99,7 +99,7 @@ use sync::{Arc, WithMut};
 
 pub use notify::{Additional, IntoNotification, Notification, Notify, Tag, TagWith};
 
-/// Useful trait for listeners.
+/// Useful traits for notifications.
 pub mod prelude {
     pub use crate::{IntoNotification, Notification};
 }
@@ -129,7 +129,7 @@ struct Inner<T> {
     list: sys::List<T>,
 }
 
-impl<T: Unpin> Inner<T> {
+impl<T> Inner<T> {
     fn new() -> Self {
         Self {
             notified: AtomicUsize::new(core::usize::MAX),
@@ -180,14 +180,14 @@ impl<T> fmt::Debug for Event<T> {
     }
 }
 
-impl<T: Unpin> Default for Event<T> {
+impl<T> Default for Event<T> {
     #[inline]
     fn default() -> Self {
         Self::with_tag()
     }
 }
 
-impl<T: Unpin> Event<T> {
+impl<T> Event<T> {
     /// Creates a new `Event` with a tag type.
     ///
     /// # Examples
@@ -347,7 +347,7 @@ impl<T: Unpin> Event<T> {
 
         if let Some(inner) = self.try_inner() {
             let limit = if notify.is_additional() {
-                usize::MAX
+                core::usize::MAX
             } else {
                 notify.count()
             };
@@ -600,15 +600,15 @@ impl<T> Drop for Event<T> {
 /// If a notified listener is dropped without receiving a notification, dropping will notify
 /// another active listener. Whether one *additional* listener will be notified depends on what
 /// kind of notification was delivered.
-pub struct EventListener<T: Unpin = ()>(Listener<T, Arc<Inner<T>>>);
+pub struct EventListener<T = ()>(Listener<T, Arc<Inner<T>>>);
 
-impl<T: Unpin> fmt::Debug for EventListener<T> {
+impl<T> fmt::Debug for EventListener<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("EventListener { .. }")
     }
 }
 
-impl<T: Unpin> EventListener<T> {
+impl<T> EventListener<T> {
     /// Create a new `EventListener` that will wait for a notification from the given [`Event`].
     pub fn new(event: &Event<T>) -> Self {
         let inner = event.inner();
@@ -762,7 +762,7 @@ impl<T: Unpin> EventListener<T> {
     }
 }
 
-impl<T: Unpin> Future for EventListener<T> {
+impl<T> Future for EventListener<T> {
     type Output = T;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -770,7 +770,7 @@ impl<T: Unpin> Future for EventListener<T> {
     }
 }
 
-struct Listener<T: Unpin, B: Deref<Target = Inner<T>> + Unpin> {
+struct Listener<T, B: Borrow<Inner<T>> + Unpin> {
     /// The reference to the original event.
     event: B,
 
@@ -781,10 +781,10 @@ struct Listener<T: Unpin, B: Deref<Target = Inner<T>> + Unpin> {
     _pin: PhantomPinned,
 }
 
-unsafe impl<T: Send + Unpin, B: Deref<Target = Inner<T>> + Unpin + Send> Send for Listener<T, B> {}
-unsafe impl<T: Send + Unpin, B: Deref<Target = Inner<T>> + Unpin + Sync> Sync for Listener<T, B> {}
+unsafe impl<T: Send, B: Borrow<Inner<T>> + Unpin + Send> Send for Listener<T, B> {}
+unsafe impl<T: Send, B: Borrow<Inner<T>> + Unpin + Sync> Sync for Listener<T, B> {}
 
-impl<T: Unpin, B: Deref<Target = Inner<T>> + Unpin> Listener<T, B> {
+impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
     /// Pin-project this listener.
     fn project(self: Pin<&mut Self>) -> (&Inner<T>, Pin<&mut Option<sys::Listener<T>>>) {
         // SAFETY: `event` is `Unpin`, and `listener`'s pin status is preserved
@@ -793,7 +793,7 @@ impl<T: Unpin, B: Deref<Target = Inner<T>> + Unpin> Listener<T, B> {
                 event, listener, ..
             } = self.get_unchecked_mut();
 
-            (&*event, Pin::new_unchecked(listener))
+            ((*event).borrow(), Pin::new_unchecked(listener))
         }
     }
 
@@ -910,7 +910,7 @@ impl<T: Unpin, B: Deref<Target = Inner<T>> + Unpin> Listener<T, B> {
     }
 }
 
-impl<T: Unpin, B: Deref<Target = Inner<T>> + Unpin> Drop for Listener<T, B> {
+impl<T, B: Borrow<Inner<T>> + Unpin> Drop for Listener<T, B> {
     fn drop(&mut self) {
         // If we're being dropped, we need to remove ourself from the list.
         let (inner, listener) = unsafe { Pin::new_unchecked(self).project() };
@@ -949,6 +949,7 @@ impl<T> State<T> {
     }
 
     /// If this state was notified, return the tag associated with the notification.
+    #[allow(unused)]
     fn notified(self) -> Option<T> {
         match self {
             Self::Notified { tag, .. } => Some(tag),
