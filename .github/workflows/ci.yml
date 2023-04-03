@@ -44,6 +44,7 @@ jobs:
         uses: taiki-e/install-action@cargo-hack
       - run: rustup target add thumbv7m-none-eabi
       - run: cargo hack build --target thumbv7m-none-eabi --no-default-features --no-dev-deps
+      - run: cargo hack build --target thumbv7m-none-eabi --no-default-features --no-dev-deps --features portable-atomic
 
   msrv:
     runs-on: ubuntu-latest
