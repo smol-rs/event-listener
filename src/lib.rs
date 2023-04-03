@@ -59,6 +59,13 @@
 //!     listener.as_mut().wait();
 //! }
 //! ```
+//!
+//! # Features
+//!
+//! - The `portable-atomic` feature enables the use of the [`portable-atomic`] crate to provide
+//!   atomic operations on platforms that don't support them.
+//!
+//! [`portable-atomic`]: https://crates.io/crates/portable-atomic
 
 #![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
@@ -71,11 +78,11 @@ mod sys;
 
 use alloc::boxed::Box;
 
-use core::borrow::Borrow;
 use core::fmt;
 use core::future::Future;
 use core::marker::PhantomPinned;
 use core::mem::ManuallyDrop;
+use core::ops::Deref;
 use core::pin::Pin;
 use core::ptr;
 use core::task::{Context, Poll, Waker};
@@ -623,7 +630,7 @@ impl Future for EventListener {
     }
 }
 
-struct Listener<B: Borrow<Inner> + Unpin> {
+struct Listener<B: Deref<Target = Inner> + Unpin> {
     /// The reference to the original event.
     event: B,
 
@@ -634,10 +641,10 @@ struct Listener<B: Borrow<Inner> + Unpin> {
     _pin: PhantomPinned,
 }
 
-unsafe impl<B: Borrow<Inner> + Unpin + Send> Send for Listener<B> {}
-unsafe impl<B: Borrow<Inner> + Unpin + Sync> Sync for Listener<B> {}
+unsafe impl<B: Deref<Target = Inner> + Unpin + Send> Send for Listener<B> {}
+unsafe impl<B: Deref<Target = Inner> + Unpin + Sync> Sync for Listener<B> {}
 
-impl<B: Borrow<Inner> + Unpin> Listener<B> {
+impl<B: Deref<Target = Inner> + Unpin> Listener<B> {
     /// Pin-project this listener.
     fn project(self: Pin<&mut Self>) -> (&Inner, Pin<&mut Option<sys::Listener>>) {
         // SAFETY: `event` is `Unpin`, and `listener`'s pin status is preserved
@@ -646,7 +653,7 @@ impl<B: Borrow<Inner> + Unpin> Listener<B> {
                 event, listener, ..
             } = self.get_unchecked_mut();
 
-            ((*event).borrow(), Pin::new_unchecked(listener))
+            (&*event, Pin::new_unchecked(listener))
         }
     }
 
@@ -779,7 +786,7 @@ impl<B: Borrow<Inner> + Unpin> Listener<B> {
     }
 }
 
-impl<B: Borrow<Inner> + Unpin> Drop for Listener<B> {
+impl<B: Deref<Target = Inner> + Unpin> Drop for Listener<B> {
     fn drop(&mut self) {
         // If we're being dropped, we need to remove ourself from the list.
         let (inner, listener) = unsafe { Pin::new_unchecked(self).project() };
@@ -915,9 +922,17 @@ fn full_fence() {
 
 /// Synchronization primitive implementation.
 mod sync {
-    pub(super) use alloc::sync::Arc;
     pub(super) use core::cell;
+
+    #[cfg(not(feature = "portable-atomic"))]
+    pub(super) use alloc::sync::Arc;
+    #[cfg(not(feature = "portable-atomic"))]
     pub(super) use core::sync::atomic;
+
+    #[cfg(feature = "portable-atomic")]
+    pub(super) use portable_atomic_crate as atomic;
+    #[cfg(feature = "portable-atomic")]
+    pub(super) use portable_atomic_util::Arc;
 
     #[cfg(feature = "std")]
     pub(super) use std::sync::{Mutex, MutexGuard};
