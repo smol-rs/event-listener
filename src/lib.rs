@@ -97,7 +97,8 @@ use std::time::{Duration, Instant};
 use sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use sync::{Arc, WithMut};
 
-pub use notify::{Additional, IntoNotification, Notification, Notify, Tag, TagWith};
+use notify::{Internal, NotificationPrivate};
+pub use notify::{IntoNotification, Notification};
 
 /// Useful traits for notifications.
 pub mod prelude {
@@ -343,13 +344,13 @@ impl<T> Event<T> {
         let notify = notify.into_notification();
 
         // Make sure the notification comes after whatever triggered it.
-        notify.fence();
+        notify.fence(notify::Internal::new());
 
         if let Some(inner) = self.try_inner() {
-            let limit = if notify.is_additional() {
+            let limit = if notify.is_additional(Internal::new()) {
                 core::usize::MAX
             } else {
-                notify.count()
+                notify.count(Internal::new())
             };
 
             // Notify if there is at least one unnotified listener and the number of notified

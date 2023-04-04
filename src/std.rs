@@ -2,7 +2,7 @@
 //!
 //! This implementation crates an intrusive linked list of listeners.
 
-use crate::notify::{GenericNotify, Notification};
+use crate::notify::{GenericNotify, Internal, Notification};
 use crate::sync::atomic::Ordering;
 use crate::sync::cell::{Cell, UnsafeCell};
 use crate::sync::{Mutex, MutexGuard};
@@ -237,8 +237,8 @@ impl<T> Inner<T> {
 
     #[cold]
     fn notify(&mut self, mut notify: impl Notification<Tag = T>) {
-        let mut n = notify.count();
-        let is_additional = notify.is_additional();
+        let mut n = notify.count(Internal::new());
+        let is_additional = notify.is_additional(Internal::new());
 
         if !is_additional {
             if n < self.notified {
@@ -260,7 +260,7 @@ impl<T> Inner<T> {
                     self.next = entry.next.get();
 
                     // Set the state to `Notified` and notify.
-                    let tag = notify.next_tag();
+                    let tag = notify.next_tag(Internal::new());
                     if let State::Task(task) = entry.state.replace(State::Notified {
                         additional: is_additional,
                         tag,

@@ -18,7 +18,7 @@ mod queue;
 use node::{Node, TaskWaiting};
 use queue::Queue;
 
-use crate::notify::{GenericNotify, Notification};
+use crate::notify::{GenericNotify, Internal, Notification};
 use crate::sync::atomic::{AtomicBool, Ordering};
 use crate::sync::cell::{Cell, UnsafeCell};
 use crate::sync::Arc;
@@ -121,15 +121,15 @@ impl<T> crate::Inner<T> {
             None => {
                 // Push it to the queue.
                 let node = Node::Notify(GenericNotify::new(
-                    notify.count(),
-                    notify.is_additional(),
+                    notify.count(Internal::new()),
+                    notify.is_additional(Internal::new()),
                     {
                         // Collect every tag we need.
                         let mut tags = {
-                            let count = notify.count();
+                            let count = notify.count(Internal::new());
                             let mut tags = Vec::with_capacity(count);
                             for _ in 0..count {
-                                tags.push(notify.next_tag());
+                                tags.push(notify.next_tag(Internal::new()));
                             }
 
                             // Convert into an iterator.
@@ -571,8 +571,8 @@ impl<T> ListenerSlab<T> {
     /// Notifies a number of listeners.
     #[cold]
     pub(crate) fn notify(&mut self, mut notify: impl Notification<Tag = T>) {
-        let mut n = notify.count();
-        let is_additional = notify.is_additional();
+        let mut n = notify.count(Internal::new());
+        let is_additional = notify.is_additional(Internal::new());
         if !is_additional {
             // Make sure we're not notifying more than we have.
             if n <= self.notified {
@@ -594,7 +594,7 @@ impl<T> ListenerSlab<T> {
                     self.start = entry.next().get();
 
                     // Set the state to `Notified` and notify.
-                    let tag = notify.next_tag();
+                    let tag = notify.next_tag(Internal::new());
                     if let State::Task(task) = entry.state().replace(State::Notified {
                         tag,
                         additional: is_additional,

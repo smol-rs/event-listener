@@ -129,7 +129,7 @@ impl<T> Drop for Queue<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::notify::{GenericNotify, Notification};
+    use crate::notify::{GenericNotify, Internal, NotificationPrivate};
 
     use super::*;
 
@@ -139,7 +139,7 @@ mod tests {
 
     fn node_to_num(node: Node<()>) -> usize {
         match node {
-            Node::Notify(notify) => notify.count(),
+            Node::Notify(notify) => notify.count(Internal::new()),
             _ => panic!("unexpected node"),
         }
     }
