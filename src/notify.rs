@@ -49,7 +49,7 @@ pub trait NotificationPrivate {
 ///     ev.notify(notify);
 /// }
 ///
-/// notify(1.additional());
+/// notify(&Event::new(), 1.additional());
 /// ```
 pub trait Notification: NotificationPrivate {}
 impl<N: NotificationPrivate + ?Sized> Notification for N {}
@@ -413,7 +413,7 @@ pub trait IntoNotification: __private::Sealed {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::Event;
+    /// use event_listener::{Event, prelude::*};
     /// use std::sync::atomic::{self, Ordering};
     ///
     /// let event = Event::new();
