@@ -263,7 +263,7 @@ pub(crate) struct GenericNotify<F> {
     tags: F,
 }
 
-impl<T, F: FnMut() -> T> GenericNotify<F> {
+impl<T, F: TagProducer<Tag = T>> GenericNotify<F> {
     pub(crate) fn new(count: usize, additional: bool, tags: F) -> Self {
         Self {
             count,
@@ -273,7 +273,7 @@ impl<T, F: FnMut() -> T> GenericNotify<F> {
     }
 }
 
-impl<T, F: FnMut() -> T> NotificationPrivate for GenericNotify<F> {
+impl<T, F: TagProducer<Tag = T>> NotificationPrivate for GenericNotify<F> {
     type Tag = T;
 
     fn is_additional(&self, _: Internal) -> bool {
@@ -289,7 +289,23 @@ impl<T, F: FnMut() -> T> NotificationPrivate for GenericNotify<F> {
     }
 
     fn next_tag(&mut self, _: Internal) -> Self::Tag {
-        (self.tags)()
+        self.tags.next_tag()
+    }
+}
+
+/// The producer for a generic notification.
+pub(crate) trait TagProducer {
+    type Tag;
+
+    /// Get the next tag.
+    fn next_tag(&mut self) -> Self::Tag;
+}
+
+impl<T, F: FnMut() -> T> TagProducer for F {
+    type Tag = T;
+
+    fn next_tag(&mut self) -> T {
+        (self)()
     }
 }
 

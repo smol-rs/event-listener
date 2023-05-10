@@ -130,11 +130,16 @@ impl<T> Drop for Queue<T> {
 #[cfg(test)]
 mod tests {
     use crate::notify::{GenericNotify, Internal, NotificationPrivate};
+    use crate::sys::node::VecProducer;
 
     use super::*;
 
     fn node_from_num(num: usize) -> Node<()> {
-        Node::Notify(GenericNotify::new(num, true, Box::new(|| ())))
+        Node::Notify(GenericNotify::new(
+            num,
+            true,
+            VecProducer(vec![(); num].into_iter()),
+        ))
     }
 
     fn node_to_num(node: Node<()>) -> usize {

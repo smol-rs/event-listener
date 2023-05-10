@@ -31,7 +31,6 @@ use core::num::NonZeroUsize;
 use core::ops;
 use core::pin::Pin;
 
-use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 impl<T> crate::Inner<T> {
@@ -125,7 +124,7 @@ impl<T> crate::Inner<T> {
                     notify.is_additional(Internal::new()),
                     {
                         // Collect every tag we need.
-                        let mut tags = {
+                        let tags = {
                             let count = notify.count(Internal::new());
                             let mut tags = Vec::with_capacity(count);
                             for _ in 0..count {
@@ -136,20 +135,7 @@ impl<T> crate::Inner<T> {
                             tags.into_iter()
                         };
 
-                        // Function that iterates over the tags.
-                        let tags = Box::new(move || tags.next().unwrap());
-
-                        // SAFETY: The generic `GenericNotify` expects a `Box` that is `Send` and
-                        // `Sync`. The `tags` function is `Send` if `T` is `Send`, and `Sync` if `T`
-                        // is `Sync`. However, the end result (the `Event`) is `Send` and `Sync` if
-                        // `T` is `Send` and `Sync`, so we can safely assume that the `Box` is
-                        // going to be handled safely.
-                        //
-                        // This also works out lifetime wise, since the Box<dyn FnMut()> does not
-                        // outlive the `Event`.
-                        unsafe {
-                            mem::transmute::<Box<dyn FnMut() -> T>, node::GenericTags<T>>(tags)
-                        }
+                        node::VecProducer(tags)
                     },
                 ));
 

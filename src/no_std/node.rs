@@ -2,18 +2,27 @@
 
 //! The node that makes up queues.
 
-use crate::notify::GenericNotify;
+use crate::notify::{GenericNotify, TagProducer};
 use crate::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use crate::sync::Arc;
 use crate::sys::ListenerSlab;
 use crate::{State, Task};
 
 use alloc::boxed::Box;
+use alloc::vec::IntoIter as VecIter;
 
 use core::num::NonZeroUsize;
 use core::ptr;
 
-pub(super) type GenericTags<T> = Box<dyn FnMut() -> T + Send + Sync + 'static>;
+pub(crate) struct VecProducer<T>(pub(crate) VecIter<T>);
+
+impl<T> TagProducer for VecProducer<T> {
+    type Tag = T;
+
+    fn next_tag(&mut self) -> Self::Tag {
+        self.0.next().unwrap()
+    }
+}
 
 /// A node in the backup queue.
 pub(crate) enum Node<T> {
@@ -26,7 +35,7 @@ pub(crate) enum Node<T> {
     },
 
     /// This node is notifying a listener.
-    Notify(GenericNotify<GenericTags<T>>),
+    Notify(GenericNotify<VecProducer<T>>),
 
     /// This node is removing a listener.
     RemoveListener {
