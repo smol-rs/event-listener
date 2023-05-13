@@ -337,11 +337,11 @@ pub trait Strategy<'a> {
     type Future: Future + 'a;
 
     /// Poll the event listener until it is ready.
-    fn poll(
+    fn poll<T>(
         &mut self,
-        event_listener: Pin<&mut EventListener>,
+        event_listener: Pin<&mut EventListener<T>>,
         context: &mut Self::Context,
-    ) -> Poll<()>;
+    ) -> Poll<T>;
 
     /// Wait for the event listener to become ready.
     fn wait(&mut self, evl: Pin<&'a mut EventListener>) -> Self::Future;
@@ -363,11 +363,11 @@ impl<'a, 'evl> Strategy<'evl> for NonBlocking<'a> {
     }
 
     #[inline]
-    fn poll(
+    fn poll<T>(
         &mut self,
-        event_listener: Pin<&mut EventListener>,
+        event_listener: Pin<&mut EventListener<T>>,
         context: &mut Self::Context,
-    ) -> Poll<()> {
+    ) -> Poll<T> {
         event_listener.poll(context)
     }
 }
@@ -391,13 +391,13 @@ impl<'evl> Strategy<'evl> for Blocking {
     }
 
     #[inline]
-    fn poll(
+    fn poll<T>(
         &mut self,
-        event_listener: Pin<&mut EventListener>,
+        event_listener: Pin<&mut EventListener<T>>,
         _context: &mut Self::Context,
-    ) -> Poll<()> {
-        event_listener.wait();
-        Poll::Ready(())
+    ) -> Poll<T> {
+        let result = event_listener.wait();
+        Poll::Ready(result)
     }
 }
 

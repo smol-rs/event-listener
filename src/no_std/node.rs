@@ -2,18 +2,30 @@
 
 //! The node that makes up queues.
 
+use crate::notify::{GenericNotify, TagProducer};
 use crate::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use crate::sync::Arc;
 use crate::sys::ListenerSlab;
 use crate::{State, Task};
 
 use alloc::boxed::Box;
+use alloc::vec::IntoIter as VecIter;
 
 use core::num::NonZeroUsize;
 use core::ptr;
 
+pub(crate) struct VecProducer<T>(pub(crate) VecIter<T>);
+
+impl<T> TagProducer for VecProducer<T> {
+    type Tag = T;
+
+    fn next_tag(&mut self) -> Self::Tag {
+        self.0.next().unwrap()
+    }
+}
+
 /// A node in the backup queue.
-pub(crate) enum Node {
+pub(crate) enum Node<T> {
     /// This node is requesting to add a listener.
     // For some reason, the MSRV build says this variant is never constructed.
     #[allow(dead_code)]
@@ -23,13 +35,7 @@ pub(crate) enum Node {
     },
 
     /// This node is notifying a listener.
-    Notify {
-        /// The number of listeners to notify.
-        count: usize,
-
-        /// Whether to wake up notified listeners.
-        additional: bool,
-    },
+    Notify(GenericNotify<VecProducer<T>>),
 
     /// This node is removing a listener.
     RemoveListener {
@@ -55,7 +61,7 @@ pub(crate) struct TaskWaiting {
     entry_id: AtomicUsize,
 }
 
-impl Node {
+impl<T> Node<T> {
     pub(crate) fn listener() -> (Self, Arc<TaskWaiting>) {
         // Create a new `TaskWaiting` structure.
         let task_waiting = Arc::new(TaskWaiting {
@@ -72,7 +78,7 @@ impl Node {
     }
 
     /// Apply the node to the list.
-    pub(super) fn apply(self, list: &mut ListenerSlab) -> Option<Task> {
+    pub(super) fn apply(self, list: &mut ListenerSlab<T>) -> Option<Task> {
         match self {
             Node::AddListener { task_waiting } => {
                 // Add a new entry to the list.
@@ -83,9 +89,9 @@ impl Node {
 
                 return task_waiting.task.take().map(|t| *t);
             }
-            Node::Notify { count, additional } => {
+            Node::Notify(notify) => {
                 // Notify the next `count` listeners.
-                list.notify(count, additional);
+                list.notify(notify);
             }
             Node::RemoveListener {
                 listener,
