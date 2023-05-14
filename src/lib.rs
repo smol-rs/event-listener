@@ -360,7 +360,7 @@ impl<T> Event<T> {
     /// event.notify(1.additional().relaxed());
     /// ```
     #[inline]
-    pub fn notify(&self, notify: impl IntoNotification<Tag = T>) {
+    pub fn notify(&self, notify: impl IntoNotification<Tag = T>) -> usize {
         let notify = notify.into_notification();
 
         // Make sure the notification comes after whatever triggered it.
@@ -376,9 +376,11 @@ impl<T> Event<T> {
             // Notify if there is at least one unnotified listener and the number of notified
             // listeners is less than `limit`.
             if inner.notified.load(Ordering::Acquire) < limit {
-                inner.notify(notify);
+                return inner.notify(notify);
             }
         }
+
+        0
     }
 
     /// Return a reference to the inner state if it has been initialized.
@@ -489,7 +491,7 @@ impl Event<()> {
     /// event.notify_relaxed(2);
     /// ```
     #[inline]
-    pub fn notify_relaxed(&self, n: usize) {
+    pub fn notify_relaxed(&self, n: usize) -> usize {
         self.notify(n.relaxed())
     }
 
@@ -538,7 +540,7 @@ impl Event<()> {
     /// event.notify_additional(1);
     /// ```
     #[inline]
-    pub fn notify_additional(&self, n: usize) {
+    pub fn notify_additional(&self, n: usize) -> usize {
         self.notify(n.additional())
     }
 
@@ -592,7 +594,7 @@ impl Event<()> {
     /// event.notify_additional_relaxed(1);
     /// ```
     #[inline]
-    pub fn notify_additional_relaxed(&self, n: usize) {
+    pub fn notify_additional_relaxed(&self, n: usize) -> usize {
         self.notify(n.additional().relaxed())
     }
 }

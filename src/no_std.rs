@@ -110,11 +110,11 @@ impl<T> crate::Inner<T> {
 
     /// Notifies a number of entries.
     #[cold]
-    pub(crate) fn notify(&self, mut notify: impl Notification<Tag = T>) {
+    pub(crate) fn notify(&self, mut notify: impl Notification<Tag = T>) -> usize {
         match self.try_lock() {
             Some(mut guard) => {
                 // Notify the listeners.
-                guard.notify(notify);
+                guard.notify(notify)
             }
 
             None => {
@@ -140,6 +140,9 @@ impl<T> crate::Inner<T> {
                 ));
 
                 self.list.queue.push(node);
+
+                // We haven't notified anyone yet.
+                0
             }
         }
     }
@@ -556,23 +559,24 @@ impl<T> ListenerSlab<T> {
 
     /// Notifies a number of listeners.
     #[cold]
-    pub(crate) fn notify(&mut self, mut notify: impl Notification<Tag = T>) {
+    pub(crate) fn notify(&mut self, mut notify: impl Notification<Tag = T>) -> usize {
         let mut n = notify.count(Internal::new());
         let is_additional = notify.is_additional(Internal::new());
         if !is_additional {
             // Make sure we're not notifying more than we have.
             if n <= self.notified {
-                return;
+                return 0;
             }
             n -= self.notified;
         }
 
+        let original_count = n;
         while n > 0 {
             n -= 1;
 
             // Notify the next entry.
             match self.start {
-                None => break,
+                None => return original_count - n - 1,
 
                 Some(e) => {
                     // Get the entry and move the pointer forwards.
@@ -593,6 +597,8 @@ impl<T> ListenerSlab<T> {
                 }
             }
         }
+
+        original_count - n
     }
 
     /// Register a task to be notified when the event is triggered.
