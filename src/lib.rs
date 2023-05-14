@@ -256,6 +256,20 @@ impl<T> Event<T> {
     ///
     /// In certain cases, this function emits a `SeqCst` fence before notifying listeners.
     ///
+    /// This function returns the number of [`EventListener`]s that were notified by this call.
+    ///
+    /// # Caveats
+    ///
+    /// If the `std` feature is disabled, the notification will be delayed under high contention,
+    /// such as when another thread is taking a while to `notify` the event. In this circumstance,
+    /// this function will return `0` instead of the number of listeners actually notified. Therefore
+    /// if the `std` feature is disabled the return value of this function should not be relied upon
+    /// for soundness and should be used only as a hint.
+    ///
+    /// If the `std` feature is enabled, no spurious returns are possible, since the `std`
+    /// implementation uses system locking primitives to ensure there is no unavoidable
+    /// contention.
+    ///
     /// # Examples
     ///
     /// Use the default notification strategy:
