@@ -205,6 +205,26 @@ impl<T> Event<T> {
         }
     }
 
+    /// Tell whether any listeners are currently notified.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    /// let listener = event.listen();
+    /// assert!(!event.is_notified());
+    ///
+    /// event.notify(1);
+    /// assert!(event.is_notified());
+    /// ```
+    #[inline]
+    pub fn is_notified(&self) -> bool {
+        self.try_inner()
+            .map_or(false, |inner| inner.notified.load(Ordering::Acquire) > 0)
+    }
+
     /// Returns a guard listening for a notification.
     ///
     /// This method emits a `SeqCst` fence after registering a listener. For now, this method
