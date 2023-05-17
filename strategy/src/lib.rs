@@ -130,19 +130,75 @@ pub use pin_project_lite::pin_project;
 macro_rules! easy_wrapper {
     (
         $(#[$meta:meta])*
-        $vis:vis struct $name:ident ($inner:ty => $output:ty);
+        $vis:vis struct $name:ident
+
+        $(<
+            $( $lifetime:lifetime $(: $lifetime_bound:lifetime)? ),* $(,)?
+            $( $generics:ident
+                $(: $generics_bound:path)?
+                $(: ?$generics_unsized_bound:path)?
+                $(: $generics_lifetime_bound:lifetime)?
+                $(= $generics_default:ty)?
+            ),* $(,)?
+        >)?
+
+        ($inner:ty => $output:ty)
+
+        $(where
+            $( $where_clause_ty:ty
+                $(: $where_clause_bound:path)?
+                $(: ?$where_clause_unsized_bound:path)?
+                $(: $where_clause_lifetime_bound:lifetime)?
+            ),* $(,)?
+        )?
+
+        ;
+
         $(#[$wait_meta:meta])*
         $wait_vis: vis wait();
     ) => {
         $crate::pin_project! {
             $(#[$meta])*
-            $vis struct $name {
+            $vis struct $name $(<
+                $( $lifetime $(: $lifetime_bound)? ),*
+                $( $generics
+                    $(: $generics_bound)?
+                    $(: ?$generics_unsized_bound)?
+                    $(: $generics_lifetime_bound)?
+                    $(= $generics_default)?
+                ),*
+            >)? $(
+                where
+                $( $where_clause_ty
+                    $(: $where_clause_bound)?
+                    $(: ?$where_clause_unsized_bound)?
+                    $(: $where_clause_lifetime_bound)?
+                ),*
+            )? {
                 #[pin]
                 _inner: $crate::FutureWrapper<$inner>
             }
         }
 
-        impl $name {
+        impl $(<
+            $( $lifetime $(: $lifetime_bound)? ,)*
+            $( $generics
+                $(: $generics_bound)?
+                $(: ?$generics_unsized_bound)?
+                $(: $generics_lifetime_bound)?
+                $(= $generics_default)?
+            ),*
+        >)? $name $(<
+            $( $lifetime ,)*
+            $( $generics ),*
+        >)? $(
+            where
+            $( $where_clause_ty
+                $(: $where_clause_bound)?
+                $(: ?$where_clause_unsized_bound)?
+                $(: $where_clause_lifetime_bound)?
+            ),*
+        )? {
             #[inline]
             fn _new(inner: $inner) -> Self {
                 Self {
@@ -158,7 +214,27 @@ macro_rules! easy_wrapper {
             }
         }
 
-        impl ::core::future::Future for $name {
+        impl $(<
+            $( $lifetime $(: $lifetime_bound)? ,)*
+            $( $generics
+                $(: $generics_bound)?
+                $(: ?$generics_unsized_bound)?
+                $(: $generics_lifetime_bound)?
+                $(= $generics_default)?
+            ),*
+        >)? ::core::future::Future for $name $(
+            <
+                $( $lifetime ,)*
+                $( $generics ),*
+            >
+        )? $(
+            where
+            $( $where_clause_ty
+                $(: $where_clause_bound)?
+                $(: ?$where_clause_unsized_bound)?
+                $(: $where_clause_lifetime_bound)?
+            ),*
+        )? {
             type Output = $output;
 
             #[inline]
