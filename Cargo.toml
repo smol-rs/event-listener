@@ -2,8 +2,8 @@
 name = "event-listener"
 # When publishing a new version:
 # - Update CHANGELOG.md
-# - Create "v2.x.y" git tag
-version = "2.5.3"
+# - Create "v3.x.y" git tag
+version = "3.0.0"
 authors = ["Stjepan Glavina <stjepang@gmail.com>"]
 edition = "2018"
 rust-version = "1.59"
