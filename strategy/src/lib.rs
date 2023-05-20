@@ -212,6 +212,14 @@ macro_rules! easy_wrapper {
                 use $crate::EventListenerFuture;
                 self._inner.into_inner().wait()
             }
+
+            pub(crate) fn poll_with_strategy<'__strategy, __S: $crate::Strategy<'__strategy>>(
+                self: ::core::pin::Pin<&'__strategy mut Self>,
+                strategy: &mut __S,
+                context: &mut __S::Context,
+            ) -> ::core::task::Poll<$output> {
+                self.project()._inner.get_pin_mut().poll_with_strategy(strategy, context)
+            }
         }
 
         impl $(<
