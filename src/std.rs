@@ -110,7 +110,7 @@ impl<T> crate::Inner<T> {
 
     /// Notifies a number of entries.
     #[cold]
-    pub(crate) fn notify(&self, notify: impl Notification<Tag = T>) {
+    pub(crate) fn notify(&self, notify: impl Notification<Tag = T>) -> usize {
         self.lock().notify(notify)
     }
 
@@ -236,23 +236,24 @@ impl<T> Inner<T> {
     }
 
     #[cold]
-    fn notify(&mut self, mut notify: impl Notification<Tag = T>) {
+    fn notify(&mut self, mut notify: impl Notification<Tag = T>) -> usize {
         let mut n = notify.count(Internal::new());
         let is_additional = notify.is_additional(Internal::new());
 
         if !is_additional {
             if n < self.notified {
-                return;
+                return 0;
             }
             n -= self.notified;
         }
 
+        let original_count = n;
         while n > 0 {
             n -= 1;
 
             // Notify the next entry.
             match self.next {
-                None => break,
+                None => return original_count - n - 1,
 
                 Some(e) => {
                     // Get the entry and move the pointer forwards.
@@ -273,6 +274,8 @@ impl<T> Inner<T> {
                 }
             }
         }
+
+        original_count - n
     }
 }
 
