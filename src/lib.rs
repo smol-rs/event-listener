@@ -639,6 +639,9 @@ impl<T> Drop for Event<T> {
 /// kind of notification was delivered.
 pub struct EventListener<T = ()>(Listener<T, Arc<Inner<T>>>);
 
+unsafe impl<T: Send> Send for EventListener<T> {}
+unsafe impl<T: Send> Sync for EventListener<T> {}
+
 impl<T> fmt::Debug for EventListener<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("EventListener { .. }")
@@ -1131,4 +1134,14 @@ mod sync {
             f(self.get_mut())
         }
     }
+}
+
+fn __test_send_and_sync() {
+    fn _assert_send<T: Send>() {}
+    fn _assert_sync<T: Sync>() {}
+
+    _assert_send::<Event<()>>();
+    _assert_sync::<Event<()>>();
+    _assert_send::<EventListener<()>>();
+    _assert_sync::<EventListener<()>>();
 }
