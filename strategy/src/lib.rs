@@ -208,11 +208,13 @@ macro_rules! easy_wrapper {
 
             $(#[$wait_meta])*
             #[inline]
+            #[allow(dead_code)]
             $wait_vis fn wait(self) -> $output {
                 use $crate::EventListenerFuture;
                 self._inner.into_inner().wait()
             }
 
+            #[allow(dead_code)]
             pub(crate) fn poll_with_strategy<'__strategy, __S: $crate::Strategy<'__strategy>>(
                 self: ::core::pin::Pin<&'__strategy mut Self>,
                 strategy: &mut __S,
@@ -500,5 +502,29 @@ impl Future for Ready {
     #[inline]
     fn poll(self: Pin<&mut Self>, _context: &mut Context<'_>) -> Poll<Self::Output> {
         Poll::Ready(())
+    }
+}
+
+#[doc(hidden)]
+pub mod __demonstration_for_public_api_warnings {
+    use super::*;
+
+    easy_wrapper! {
+        pub struct Demonstration<T>(Inner<T> => ());
+        pub(crate) wait();
+    }
+
+    struct Inner<T>(T);
+
+    impl<T> EventListenerFuture for Inner<T> {
+        type Output = ();
+
+        fn poll_with_strategy<'a, S: Strategy<'a>>(
+            self: Pin<&mut Self>,
+            _strategy: &mut S,
+            _context: &mut S::Context,
+        ) -> Poll<Self::Output> {
+            Poll::Ready(())
+        }
     }
 }
