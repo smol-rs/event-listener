@@ -60,6 +60,12 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![forbid(future_incompatible, missing_docs)]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
 
 use core::future::Future;
 use core::marker::PhantomData;
