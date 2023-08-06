@@ -679,6 +679,32 @@ impl<T> EventListener<T> {
         notify::full_fence();
     }
 
+    /// Tell if this [`EventListener`] is currently listening for a notification.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::{Event, EventListener};
+    ///
+    /// let event = Event::new();
+    /// let mut listener = Box::pin(EventListener::new(&event));
+    ///
+    /// // The listener starts off not listening.
+    /// assert!(!listener.is_listening());
+    ///
+    /// // After listen() is called, the listener is listening.
+    /// listener.as_mut().listen();
+    /// assert!(listener.is_listening());
+    ///
+    /// // Once the future is notified, the listener is no longer listening.
+    /// event.notify(1);
+    /// listener.as_mut().wait();
+    /// assert!(!listener.is_listening());
+    /// ```
+    pub fn is_listening(&self) -> bool {
+        self.0.listener.is_some()
+    }
+
     /// Blocks until a notification is received.
     ///
     /// # Examples
