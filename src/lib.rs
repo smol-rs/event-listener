@@ -679,6 +679,11 @@ impl<T> EventListener<T> {
         notify::full_fence();
     }
 
+    /// Tell if this [`EventListener`] is currently listening for a notification.
+    pub fn is_listening(&self) -> bool {
+        self.0.listener.is_some()
+    }
+
     /// Blocks until a notification is received.
     ///
     /// # Examples
