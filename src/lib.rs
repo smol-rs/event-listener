@@ -1145,6 +1145,7 @@ impl TaskRef<'_> {
 }
 
 /// Synchronization primitive implementation.
+#[cfg(not(all(loom, feature = "loom")))]
 mod sync {
     pub(super) use core::cell;
 
@@ -1180,6 +1181,22 @@ mod sync {
             f(self.get_mut())
         }
     }
+}
+
+#[cfg(all(loom, feature = "loom"))]
+mod sync {
+    pub(super) use loom::{cell, sync::Arc};
+
+    pub(crate) mod atomic {
+        pub(crate) use loom::sync::atomic::*;
+        pub(crate) use loom::sync::atomic::fence as compiler_fence;
+    }
+
+    #[cfg(feature = "std")]
+    pub(super) use loom::sync::{Mutex, MutexGuard};
+
+    pub trait WithMut {}
+    impl<T> WithMut for atomic::AtomicPtr<T> {}
 }
 
 fn __test_send_and_sync() {

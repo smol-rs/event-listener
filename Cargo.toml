@@ -33,6 +33,13 @@ version = "1.2.0"
 default-features = false
 optional = true
 
+# The `loom` feature, combined with the `loom` rustflag, enables a reimplementation
+# of `parking` using `loom`. This feature is perma-unstable and should not be used
+# in stable code.
+[target.'cfg(loom)'.dependencies.loom]
+version = "0.6"
+optional = true
+
 [dev-dependencies]
 futures-lite = "1.12.0"
 waker-fn = "1"
