@@ -342,7 +342,7 @@ impl<T, F: FnMut() -> T> TagProducer for F {
 /// This trait is implemented for all types that implement [`Notification`], as well as for non-floating-point
 /// numeric literals (`usize`, `i32`, etc).
 ///
-/// This function can be thought of as being analagous to [`std::iter::IntoIterator`], but for [`Notification`].
+/// This function can be thought of as being analogous to [`std::iter::IntoIterator`], but for [`Notification`].
 pub trait IntoNotification: __private::Sealed {
     /// The tag data associated with a notification.
     ///
