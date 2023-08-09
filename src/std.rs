@@ -57,28 +57,23 @@ impl<T> crate::Inner<T> {
     /// Add a new listener to the list.
     ///
     /// Does nothing is the listener is already registered.
-    pub(crate) fn insert(&self, listener: Pin<&mut Option<Listener<T>>>) {
+    pub(crate) fn insert(&self, mut listener: Pin<&mut Option<Listener<T>>>) {
         let mut inner = self.lock();
 
         // SAFETY: We are locked, so we can access the inner `link`.
         let entry = unsafe {
-            // SAFETY: We never move out the `link` field.
-            let listener = match listener.get_unchecked_mut() {
-                listener @ None => {
-                    // TODO: Use Option::insert once the MSRV is high enough.
-                    *listener = Some(Listener {
-                        link: UnsafeCell::new(Link {
-                            state: Cell::new(State::Created),
-                            prev: Cell::new(inner.tail),
-                            next: Cell::new(None),
-                        }),
-                        _pin: PhantomPinned,
-                    });
-
-                    listener.as_mut().unwrap()
-                }
-                Some(_) => return,
-            };
+            if listener.is_some() {
+                return;
+            }
+            listener.as_mut().set(Some(Listener {
+                link: UnsafeCell::new(Link {
+                    state: Cell::new(State::Created),
+                    prev: Cell::new(inner.tail),
+                    next: Cell::new(None),
+                }),
+                _pin: PhantomPinned,
+            }));
+            let listener = listener.as_pin_mut().unwrap();
 
             // Get the inner pointer.
             &*listener.link.get()
@@ -127,8 +122,7 @@ impl<T> crate::Inner<T> {
 
         // SAFETY: We are locked, so we can access the inner `link`.
         let entry = unsafe {
-            // SAFETY: We never move out the `link` field.
-            let listener = match listener.as_mut().get_unchecked_mut().as_mut() {
+            let listener = match listener.as_mut().as_pin_mut() {
                 Some(listener) => listener,
                 None => return RegisterResult::NeverInserted,
             };
@@ -172,8 +166,7 @@ impl<T> Inner<T> {
         propogate: bool,
     ) -> Option<State<T>> {
         let entry = unsafe {
-            // SAFETY: We never move out the `link` field.
-            let listener = listener.as_mut().get_unchecked_mut().as_mut()?;
+            let listener = listener.as_mut().as_pin_mut()?;
 
             // Get the inner pointer.
             &*listener.link.get()
