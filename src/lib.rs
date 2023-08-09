@@ -89,7 +89,6 @@ use alloc::boxed::Box;
 use core::borrow::Borrow;
 use core::fmt;
 use core::future::Future;
-use core::marker::PhantomPinned;
 use core::mem::ManuallyDrop;
 use core::pin::Pin;
 use core::ptr;
@@ -633,17 +632,23 @@ impl<T> Drop for Event<T> {
     }
 }
 
-/// A guard waiting for a notification from an [`Event`].
-///
-/// There are two ways for a listener to wait for a notification:
-///
-/// 1. In an asynchronous manner using `.await`.
-/// 2. In a blocking manner by calling [`EventListener::wait()`] on it.
-///
-/// If a notified listener is dropped without receiving a notification, dropping will notify
-/// another active listener. Whether one *additional* listener will be notified depends on what
-/// kind of notification was delivered.
-pub struct EventListener<T = ()>(Listener<T, Arc<Inner<T>>>);
+pin_project_lite::pin_project! {
+    /// A guard waiting for a notification from an [`Event`].
+    ///
+    /// There are two ways for a listener to wait for a notification:
+    ///
+    /// 1. In an asynchronous manner using `.await`.
+    /// 2. In a blocking manner by calling [`EventListener::wait()`] on it.
+    ///
+    /// If a notified listener is dropped without receiving a notification, dropping will notify
+    /// another active listener. Whether one *additional* listener will be notified depends on what
+    /// kind of notification was delivered.
+    #[project(!Unpin)] // implied by Listener, but can generate better docs
+    pub struct EventListener<T = ()> {
+        #[pin]
+        listener: Listener<T, Arc<Inner<T>>>,
+    }
+}
 
 unsafe impl<T: Send> Send for EventListener<T> {}
 unsafe impl<T: Send> Sync for EventListener<T> {}
@@ -662,10 +667,9 @@ impl<T> EventListener<T> {
         let listener = Listener {
             event: unsafe { Arc::clone(&ManuallyDrop::new(Arc::from_raw(inner))) },
             listener: None,
-            _pin: PhantomPinned,
         };
 
-        Self(listener)
+        Self { listener }
     }
 
     /// Register this listener into the given [`Event`].
@@ -702,7 +706,7 @@ impl<T> EventListener<T> {
     /// assert!(!listener.is_listening());
     /// ```
     pub fn is_listening(&self) -> bool {
-        self.0.listener.is_some()
+        self.listener.listener.is_some()
     }
 
     /// Blocks until a notification is received.
@@ -826,11 +830,11 @@ impl<T> EventListener<T> {
     }
 
     fn listener(self: Pin<&mut Self>) -> Pin<&mut Listener<T, Arc<Inner<T>>>> {
-        unsafe { self.map_unchecked_mut(|this| &mut this.0) }
+        self.project().listener
     }
 
     fn inner(&self) -> &Arc<Inner<T>> {
-        &self.0.event
+        &self.listener.event
     }
 }
 
@@ -842,37 +846,44 @@ impl<T> Future for EventListener<T> {
     }
 }
 
-struct Listener<T, B: Borrow<Inner<T>> + Unpin> {
-    /// The reference to the original event.
-    event: B,
+pin_project_lite::pin_project! {
+    #[project(!Unpin)]
+    struct Listener<T, B: Borrow<Inner<T>>>
+    where
+        B: Unpin,
+    {
+        // The reference to the original event.
+        event: B,
 
-    /// The inner state of the listener.
-    listener: Option<sys::Listener<T>>,
+        // The inner state of the listener.
+        #[pin]
+        listener: Option<sys::Listener<T>>,
+    }
 
-    /// Enforce pinning.
-    _pin: PhantomPinned,
+    impl<T, B: Borrow<Inner<T>>> PinnedDrop for Listener<T, B>
+    where
+        B: Unpin,
+    {
+        fn drop(mut this: Pin<&mut Self>) {
+            // If we're being dropped, we need to remove ourself from the list.
+            let this = this.project();
+            let inner = (*this.event).borrow();
+
+            inner.remove(this.listener, true);
+        }
+    }
 }
 
 unsafe impl<T: Send, B: Borrow<Inner<T>> + Unpin + Send> Send for Listener<T, B> {}
 unsafe impl<T: Send, B: Borrow<Inner<T>> + Unpin + Sync> Sync for Listener<T, B> {}
 
 impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
-    /// Pin-project this listener.
-    fn project(self: Pin<&mut Self>) -> (&Inner<T>, Pin<&mut Option<sys::Listener<T>>>) {
-        // SAFETY: `event` is `Unpin`, and `listener`'s pin status is preserved
-        unsafe {
-            let Listener {
-                event, listener, ..
-            } = self.get_unchecked_mut();
-
-            ((*event).borrow(), Pin::new_unchecked(listener))
-        }
-    }
-
     /// Register this listener with the event.
     fn insert(self: Pin<&mut Self>) {
-        let (inner, listener) = self.project();
-        inner.insert(listener);
+        let this = self.project();
+        let inner = (*this.event).borrow();
+
+        inner.insert(this.listener);
     }
 
     /// Wait until the provided deadline.
@@ -917,10 +928,11 @@ impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
         parker: &Parker,
         unparker: TaskRef<'_>,
     ) -> Option<T> {
-        let (inner, mut listener) = self.project();
+        let mut this = self.project();
+        let inner = (*this.event).borrow();
 
         // Set the listener's state to `Task`.
-        if let Some(tag) = inner.register(listener.as_mut(), unparker).notified() {
+        if let Some(tag) = inner.register(this.listener.as_mut(), unparker).notified() {
             // We were already notified, so we don't need to park.
             return Some(tag);
         }
@@ -936,7 +948,7 @@ impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
                     if now >= deadline {
                         // Remove our entry and check if we were notified.
                         return inner
-                            .remove(listener, false)
+                            .remove(this.listener, false)
                             .expect("We never removed ourself from the list")
                             .notified();
                     }
@@ -944,7 +956,7 @@ impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
             }
 
             // See if we were notified.
-            if let Some(tag) = inner.register(listener.as_mut(), unparker).notified() {
+            if let Some(tag) = inner.register(this.listener.as_mut(), unparker).notified() {
                 return Some(tag);
             }
         }
@@ -953,20 +965,22 @@ impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
     /// Drops this listener and discards its notification (if any) without notifying another
     /// active listener.
     fn discard(self: Pin<&mut Self>) -> bool {
-        let (inner, listener) = self.project();
+        let this = self.project();
+        let inner = (*this.event).borrow();
 
         inner
-            .remove(listener, false)
+            .remove(this.listener, false)
             .map_or(false, |state| state.is_notified())
     }
 
     /// Poll this listener for a notification.
     fn poll_internal(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<T> {
-        let (inner, mut listener) = self.project();
+        let mut this = self.project();
+        let inner = (*this.event).borrow();
 
         // Try to register the listener.
         match inner
-            .register(listener.as_mut(), TaskRef::Waker(cx.waker()))
+            .register(this.listener.as_mut(), TaskRef::Waker(cx.waker()))
             .notified()
         {
             Some(tag) => {
@@ -979,15 +993,6 @@ impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
                 Poll::Pending
             }
         }
-    }
-}
-
-impl<T, B: Borrow<Inner<T>> + Unpin> Drop for Listener<T, B> {
-    fn drop(&mut self) {
-        // If we're being dropped, we need to remove ourself from the list.
-        let (inner, listener) = unsafe { Pin::new_unchecked(self).project() };
-
-        inner.remove(listener, true);
     }
 }
 
