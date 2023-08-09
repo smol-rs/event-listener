@@ -70,14 +70,14 @@ impl<T> crate::Inner<T> {
     pub(crate) fn remove(
         &self,
         mut listener: Pin<&mut Option<Listener<T>>>,
-        propogate: bool,
+        propagate: bool,
     ) -> Option<State<T>> {
         let state = match listener.as_mut().take() {
             Some(Listener::HasNode(key)) => {
                 match self.try_lock() {
                     Some(mut list) => {
                         // Fast path removal.
-                        list.remove(key, propogate)
+                        list.remove(key, propagate)
                     }
 
                     None => {
@@ -85,7 +85,7 @@ impl<T> crate::Inner<T> {
                         // This is why intrusive lists don't work on no_std.
                         let node = Node::RemoveListener {
                             listener: key,
-                            propagate: propogate,
+                            propagate,
                         };
 
                         self.list.queue.push(node);
@@ -500,7 +500,7 @@ impl<T> ListenerSlab<T> {
     }
 
     /// Removes an entry from the list and returns its state.
-    pub(crate) fn remove(&mut self, key: NonZeroUsize, propogate: bool) -> Option<State<T>> {
+    pub(crate) fn remove(&mut self, key: NonZeroUsize, propagate: bool) -> Option<State<T>> {
         let entry = &self.listeners[key.get()];
         let prev = entry.prev().get();
         let next = entry.next().get();
@@ -538,8 +538,8 @@ impl<T> ListenerSlab<T> {
         if state.is_notified() {
             self.notified = self.notified.saturating_sub(1);
 
-            if propogate {
-                // Propogate the notification to the next entry.
+            if propagate {
+                // Propagate the notification to the next entry.
                 let state = mem::replace(&mut state, State::NotifiedTaken);
                 if let State::Notified { tag, additional } = state {
                     let tags = {
@@ -1247,7 +1247,7 @@ mod tests {
             }
         );
 
-        // Remove and propogate the second listener.
+        // Remove and propagate the second listener.
         assert_eq!(listeners.remove(key2, true), Some(State::NotifiedTaken));
 
         // The third listener should be notified.
@@ -1339,7 +1339,7 @@ mod tests {
         inner.notify(GenericNotify::new(1, false, || ()));
         assert!(woken.load(Ordering::SeqCst));
 
-        // Remove the second listener and propogate the notification.
+        // Remove the second listener and propagate the notification.
         assert_eq!(
             inner.remove(Pin::new(&mut listener2), true),
             Some(State::NotifiedTaken)

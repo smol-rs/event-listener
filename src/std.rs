@@ -103,9 +103,9 @@ impl<T> crate::Inner<T> {
     pub(crate) fn remove(
         &self,
         listener: Pin<&mut Option<Listener<T>>>,
-        propogate: bool,
+        propagate: bool,
     ) -> Option<State<T>> {
-        self.lock().remove(listener, propogate)
+        self.lock().remove(listener, propagate)
     }
 
     /// Notifies a number of entries.
@@ -169,7 +169,7 @@ impl<T> Inner<T> {
     fn remove(
         &mut self,
         mut listener: Pin<&mut Option<Listener<T>>>,
-        propogate: bool,
+        propagate: bool,
     ) -> Option<State<T>> {
         let entry = unsafe {
             // SAFETY: We never move out the `link` field.
@@ -219,7 +219,7 @@ impl<T> Inner<T> {
         if state.is_notified() {
             self.notified -= 1;
 
-            if propogate {
+            if propagate {
                 let state = mem::replace(&mut state, State::NotifiedTaken);
                 if let State::Notified { additional, tag } = state {
                     let tags = {
