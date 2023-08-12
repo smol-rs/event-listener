@@ -19,7 +19,7 @@ pub(crate) struct VecProducer<T>(pub(crate) VecIter<T>);
 impl<T> TagProducer for VecProducer<T> {
     type Tag = T;
 
-    fn next_tag(&mut self) -> Self::Tag {
+    fn next_tag(&mut self, _direct: bool) -> Self::Tag {
         self.0.next().unwrap()
     }
 }

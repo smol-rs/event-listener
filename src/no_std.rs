@@ -128,7 +128,8 @@ impl<T> crate::Inner<T> {
                             let count = notify.count(Internal::new());
                             let mut tags = Vec::with_capacity(count);
                             for _ in 0..count {
-                                tags.push(notify.next_tag(Internal::new()));
+                                // This is an indirect call, make sure to tell the user that.
+                                tags.push(notify.next_tag(false, Internal::new()));
                             }
 
                             // Convert into an iterator.
@@ -545,7 +546,7 @@ impl<T> ListenerSlab<T> {
                     let tags = {
                         let mut tag = Some(tag);
 
-                        move || tag.take().expect("called more than once")
+                        move |_| tag.take().expect("called more than once")
                     };
 
                     self.notify(GenericNotify::new(1, additional, tags));
@@ -584,7 +585,7 @@ impl<T> ListenerSlab<T> {
                     self.start = entry.next().get();
 
                     // Set the state to `Notified` and notify.
-                    let tag = notify.next_tag(Internal::new());
+                    let tag = notify.next_tag(true, Internal::new());
                     if let State::Task(task) = entry.state().replace(State::Notified {
                         tag,
                         additional: is_additional,
@@ -861,7 +862,7 @@ mod tests {
         let key3 = listeners.insert(State::Created);
 
         // Notify one.
-        listeners.notify(GenericNotify::new(1, true, || ()));
+        listeners.notify(GenericNotify::new(1, true, |_| ()));
 
         assert_eq!(listeners.len, 3);
         assert_eq!(listeners.notified, 1);
@@ -993,7 +994,7 @@ mod tests {
         );
 
         // Notify the listener.
-        listeners.notify(GenericNotify::new(2, false, || ()));
+        listeners.notify(GenericNotify::new(2, false, |_| ()));
 
         assert_eq!(listeners.len, 3);
         assert_eq!(listeners.notified, 2);
@@ -1100,7 +1101,7 @@ mod tests {
         );
 
         // Notify the first listener.
-        listeners.notify(GenericNotify::new(1, false, || ()));
+        listeners.notify(GenericNotify::new(1, false, |_| ()));
 
         assert_eq!(listeners.len, 3);
         assert_eq!(listeners.notified, 1);
@@ -1138,7 +1139,7 @@ mod tests {
         );
 
         // Calling notify again should not change anything.
-        listeners.notify(GenericNotify::new(1, false, || ()));
+        listeners.notify(GenericNotify::new(1, false, |_| ()));
 
         assert_eq!(listeners.len, 3);
         assert_eq!(listeners.notified, 1);
@@ -1213,7 +1214,7 @@ mod tests {
         );
 
         // Notify the second listener.
-        listeners.notify(GenericNotify::new(1, false, || ()));
+        listeners.notify(GenericNotify::new(1, false, |_| ()));
         assert!(woken.load(Ordering::SeqCst));
 
         assert_eq!(listeners.len, 2);
@@ -1319,11 +1320,11 @@ mod tests {
         );
 
         // Notify the first listener.
-        inner.notify(GenericNotify::new(1, false, || ()));
+        inner.notify(GenericNotify::new(1, false, |_| ()));
         assert!(!woken.load(Ordering::SeqCst));
 
         // Another notify should do nothing.
-        inner.notify(GenericNotify::new(1, false, || ()));
+        inner.notify(GenericNotify::new(1, false, |_| ()));
         assert!(!woken.load(Ordering::SeqCst));
 
         // Receive the notification.
@@ -1336,7 +1337,7 @@ mod tests {
         assert!(listener1.is_none());
 
         // Notify the second listener.
-        inner.notify(GenericNotify::new(1, false, || ()));
+        inner.notify(GenericNotify::new(1, false, |_| ()));
         assert!(woken.load(Ordering::SeqCst));
 
         // Remove the second listener and propagate the notification.

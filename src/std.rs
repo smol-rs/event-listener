@@ -217,7 +217,7 @@ impl<T> Inner<T> {
                 if let State::Notified { additional, tag } = state {
                     let tags = {
                         let mut tag = Some(tag);
-                        move || tag.take().expect("tag already taken")
+                        move |_| tag.take().expect("tag already taken")
                     };
                     self.notify(GenericNotify::new(1, additional, tags));
                 }
@@ -254,7 +254,7 @@ impl<T> Inner<T> {
                     self.next = entry.next.get();
 
                     // Set the state to `Notified` and notify.
-                    let tag = notify.next_tag(Internal::new());
+                    let tag = notify.next_tag(true, Internal::new());
                     if let State::Task(task) = entry.state.replace(State::Notified {
                         additional: is_additional,
                         tag,
@@ -375,7 +375,7 @@ mod tests {
         inner.insert(listen3.as_mut());
 
         // Notify one.
-        inner.notify(GenericNotify::new(1, false, || ()));
+        inner.notify(GenericNotify::new(1, false, |_| ()));
 
         // Remove one.
         inner.remove(listen3, true);

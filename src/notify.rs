@@ -25,7 +25,7 @@ pub trait NotificationPrivate {
     /// Get a tag to be associated with a notification.
     ///
     /// This method is expected to be called `count()` times.
-    fn next_tag(&mut self, internal: Internal) -> Self::Tag;
+    fn next_tag(&mut self, direct: bool, internal: Internal) -> Self::Tag;
 }
 
 /// A notification that can be used to notify an [`Event`].
@@ -54,6 +54,27 @@ pub trait NotificationPrivate {
 pub trait Notification: NotificationPrivate {}
 impl<N: NotificationPrivate + ?Sized> Notification for N {}
 
+/// The data given to a function used to generate a tag for a tagged notification.
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct TagData {
+    /// Whether or not this notifications is direct.
+    ///
+    /// For the `no_std` backend, the tag is sometimes saved to a queue before it is used to notify
+    /// a listener. However, it is possible for the listener to already be notified by the time the
+    /// tag is used. In this case, the tag is dropped and left unused.
+    ///
+    /// "Direct" notifications are when the tag is used immediately. This is the case when the
+    /// `std` feature is active or there is no contention on the event. When there is too much
+    /// contention and blocking isn't possible, the tag is saved to a queue and used later. This
+    /// is called an "indirect" notification.
+    ///
+    /// When using the event's tag system as a means of transferring data, like for a channel,
+    /// it is important to know whether or not the tag is direct. If the tag is indirect, then
+    /// important data should not be stored in the tag, as it may be dropped.
+    pub direct: bool,
+}
+
 /// Notify a given number of unnotifed listeners.
 #[derive(Debug, Clone)]
 #[doc(hidden)]
@@ -81,7 +102,7 @@ impl NotificationPrivate for Notify {
         self.0
     }
 
-    fn next_tag(&mut self, _: Internal) -> Self::Tag {}
+    fn next_tag(&mut self, _direct: bool, _: Internal) -> Self::Tag {}
 }
 
 /// Make the underlying notification additional.
@@ -114,8 +135,8 @@ where
         self.0.count(i)
     }
 
-    fn next_tag(&mut self, i: Internal) -> Self::Tag {
-        self.0.next_tag(i)
+    fn next_tag(&mut self, direct: bool, i: Internal) -> Self::Tag {
+        self.0.next_tag(direct, i)
     }
 }
 
@@ -149,8 +170,8 @@ where
         self.0.count(i)
     }
 
-    fn next_tag(&mut self, i: Internal) -> Self::Tag {
-        self.0.next_tag(i)
+    fn next_tag(&mut self, direct: bool, i: Internal) -> Self::Tag {
+        self.0.next_tag(direct, i)
     }
 }
 
@@ -191,7 +212,7 @@ where
         self.inner.count(i)
     }
 
-    fn next_tag(&mut self, _: Internal) -> Self::Tag {
+    fn next_tag(&mut self, _direct: bool, _: Internal) -> Self::Tag {
         self.tag.clone()
     }
 }
@@ -230,7 +251,7 @@ impl<N, F> TagWith<N, F> {
 impl<N, F, T> NotificationPrivate for TagWith<N, F>
 where
     N: Notification + ?Sized,
-    F: FnMut() -> T,
+    F: FnMut(TagData) -> T,
 {
     type Tag = T;
 
@@ -246,8 +267,9 @@ where
         self.inner.count(i)
     }
 
-    fn next_tag(&mut self, _: Internal) -> Self::Tag {
-        (self.tag)()
+    fn next_tag(&mut self, direct: bool, _: Internal) -> Self::Tag {
+        let data = TagData { direct };
+        (self.tag)(data)
     }
 }
 
@@ -288,8 +310,8 @@ impl<T, F: TagProducer<Tag = T>> NotificationPrivate for GenericNotify<F> {
         self.count
     }
 
-    fn next_tag(&mut self, _: Internal) -> Self::Tag {
-        self.tags.next_tag()
+    fn next_tag(&mut self, direct: bool, _: Internal) -> Self::Tag {
+        self.tags.next_tag(direct)
     }
 }
 
@@ -298,14 +320,15 @@ pub(crate) trait TagProducer {
     type Tag;
 
     /// Get the next tag.
-    fn next_tag(&mut self) -> Self::Tag;
+    fn next_tag(&mut self, direct: bool) -> Self::Tag;
 }
 
-impl<T, F: FnMut() -> T> TagProducer for F {
+impl<T, F: FnMut(TagData) -> T> TagProducer for F {
     type Tag = T;
 
-    fn next_tag(&mut self) -> T {
-        (self)()
+    fn next_tag(&mut self, direct: bool) -> T {
+        let data = TagData { direct };
+        (self)(data)
     }
 }
 
@@ -505,8 +528,8 @@ pub trait IntoNotification: __private::Sealed {
     /// let mut listener2 = event.listen();
     ///
     /// // Notify with `true` then `false`.
-    /// event.notify(1.additional().tag_with(|| true));
-    /// event.notify(1.additional().tag_with(|| false));
+    /// event.notify(1.additional().tag_with(|_| true));
+    /// event.notify(1.additional().tag_with(|_| false));
     ///
     /// assert_eq!(listener1.as_mut().wait(), true);
     /// assert_eq!(listener2.as_mut().wait(), false);
@@ -514,7 +537,7 @@ pub trait IntoNotification: __private::Sealed {
     fn tag_with<T, F>(self, tag: F) -> TagWith<Self::Notify, F>
     where
         Self: Sized + IntoNotification<Tag = ()>,
-        F: FnMut() -> T,
+        F: FnMut(TagData) -> T,
     {
         TagWith::new(tag, self.into_notification())
     }
@@ -595,4 +618,31 @@ mod __private {
     #[doc(hidden)]
     pub trait Sealed {}
     impl<N: super::NotificationPrivate + ?Sized> Sealed for N {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_offshoots_impl_notification() {
+        fn is_notification<N: Notification>(_: N) {}
+
+        is_notification(1.into_notification());
+        is_notification(1.additional());
+        is_notification(1.relaxed());
+        is_notification(1.tag(()));
+        is_notification(1.tag_with(|_| ()));
+
+        is_notification(1.additional().relaxed());
+        is_notification(1.relaxed().additional());
+        is_notification(1.additional().tag(()));
+        is_notification(1.tag(()).additional());
+        is_notification(1.relaxed().tag(()));
+        is_notification(1.tag(()).relaxed());
+        is_notification(1.additional().tag_with(|_| ()));
+        is_notification(1.tag_with(|_| ()).additional());
+        is_notification(1.relaxed().tag_with(|_| ()));
+        is_notification(1.tag_with(|_| ()).relaxed());
+    }
 }
