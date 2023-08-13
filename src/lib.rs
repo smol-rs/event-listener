@@ -110,7 +110,7 @@ pub mod prelude {
     pub use crate::{IntoNotification, Notification};
 }
 
-/// 1.39-compatible replacement for `matches!`
+/// 1.40-compatible replacement for `matches!`
 macro_rules! matches {
     ($expr:expr, $($pattern:pat)|+ $(if $guard: expr)?) => {
         match $expr {
