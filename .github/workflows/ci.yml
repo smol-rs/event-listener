@@ -27,27 +27,37 @@ defaults:
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        rust: [nightly, beta, stable]
+        include:
+          - rust: stable
+          - rust: beta
+          - rust: nightly
+          - rust: nightly
+            target: i686-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v3
       - name: Install Rust
         run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+      - name: Install cross-compilation tools
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+        if: matrix.target != ''
       - run: cargo build --all --all-features --all-targets
-      - name: Run cargo check (without dev-dependencies to catch missing feature flags)
-        if: startsWith(matrix.rust, 'nightly')
-        run: cargo check -Z features=dev_dep
       - run: cargo test --all
+      - run: cargo test --all --release
       - run: cargo test --no-default-features --tests
+      - run: cargo test --no-default-features --tests --release
       - run: cargo build -p event-listener-strategy --no-default-features
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - run: rustup target add thumbv7m-none-eabi
-      - run: cargo hack build --target thumbv7m-none-eabi --no-default-features --no-dev-deps
+      - name: Run cargo check (without dev-dependencies to catch missing feature flags)
+        run: cargo hack build --all --no-dev-deps
+      - run: cargo hack build --all --target thumbv7m-none-eabi --no-default-features --no-dev-deps
       - run: cargo hack build --target thumbv7m-none-eabi --no-default-features --no-dev-deps --features portable-atomic
 
   msrv:
@@ -86,10 +96,11 @@ jobs:
       - uses: actions/checkout@v3
       - name: Install Rust
         run: rustup toolchain install nightly --component miri && rustup default nightly
+      - run: |
+          echo "MIRIFLAGS=-Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation" >>"${GITHUB_ENV}"
+          echo "RUSTFLAGS=${RUSTFLAGS} -Z randomize-layout" >>"${GITHUB_ENV}"
       - run: cargo miri test --all
-        env:
-          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation
-          RUSTFLAGS: ${{ env.RUSTFLAGS }} -Z randomize-layout
+      - run: cargo miri test --no-default-features --tests
 
   security_audit:
     permissions:
