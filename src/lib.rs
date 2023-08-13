@@ -110,16 +110,6 @@ pub mod prelude {
     pub use crate::{IntoNotification, Notification};
 }
 
-/// 1.39-compatible replacement for `matches!`
-macro_rules! matches {
-    ($expr:expr, $($pattern:pat)|+ $(if $guard: expr)?) => {
-        match $expr {
-            $($pattern)|+ $(if $guard)? => true,
-            _ => false,
-        }
-    };
-}
-
 /// Inner state of [`Event`].
 struct Inner<T> {
     /// The number of notified entries, or `usize::MAX` if all of them have been notified.

@@ -1,6 +1,6 @@
 //! The `Notification` trait for specifying notification.
 
-use crate::sync::atomic::{self, AtomicUsize, Ordering};
+use crate::sync::atomic::{self, Ordering};
 use core::fmt;
 
 pub(crate) use __private::Internal;
@@ -555,27 +555,31 @@ impl_for_numeric_types! { usize u8 u16 u32 u64 u128 isize i8 i16 i32 i64 i128 }
 /// Equivalent to `atomic::fence(Ordering::SeqCst)`, but in some cases faster.
 #[inline]
 pub(super) fn full_fence() {
-    if cfg!(all(
-        any(target_arch = "x86", target_arch = "x86_64"),
-        not(miri)
-    )) {
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), not(miri), not(loom)))]
+    {
+        use core::{arch::asm, cell::UnsafeCell};
         // HACK(stjepang): On x86 architectures there are two different ways of executing
         // a `SeqCst` fence.
         //
         // 1. `atomic::fence(SeqCst)`, which compiles into a `mfence` instruction.
-        // 2. `_.compare_exchange(_, _, SeqCst, SeqCst)`, which compiles into a `lock cmpxchg` instruction.
+        // 2. A `lock <op>` instruction.
         //
         // Both instructions have the effect of a full barrier, but empirical benchmarks have shown
         // that the second one is sometimes a bit faster.
-        //
-        // The ideal solution here would be to use inline assembly, but we're instead creating a
-        // temporary atomic variable and compare-and-exchanging its value. No sane compiler to
-        // x86 platforms is going to optimize this away.
-        atomic::compiler_fence(Ordering::SeqCst);
-        let a = AtomicUsize::new(0);
-        let _ = a.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst);
-        atomic::compiler_fence(Ordering::SeqCst);
-    } else {
+        let a = UnsafeCell::new(0_usize);
+        // It is common to use `lock or` here, but when using a local variable, `lock not`, which
+        // does not change the flag, should be slightly more efficient.
+        // Refs: https://www.felixcloutier.com/x86/not
+        unsafe {
+            #[cfg(target_pointer_width = "64")]
+            asm!("lock not qword ptr [{0}]", in(reg) a.get(), options(nostack, preserves_flags));
+            #[cfg(target_pointer_width = "32")]
+            asm!("lock not dword ptr [{0:e}]", in(reg) a.get(), options(nostack, preserves_flags));
+        }
+        return;
+    }
+    #[allow(unreachable_code)]
+    {
         atomic::fence(Ordering::SeqCst);
     }
 }
