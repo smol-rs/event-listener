@@ -54,6 +54,11 @@ impl<T> crate::Inner<T> {
         }
     }
 
+    /// Whether or not this number of listeners would lead to a notification.
+    pub(crate) fn needs_notification(&self, limit: usize) -> bool {
+        self.notified.load(Ordering::Acquire) < limit
+    }
+
     /// Add a new listener to the list.
     ///
     /// Does nothing is the listener is already registered.

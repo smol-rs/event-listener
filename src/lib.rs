@@ -388,7 +388,7 @@ impl<T> Event<T> {
 
             // Notify if there is at least one unnotified listener and the number of notified
             // listeners is less than `limit`.
-            if inner.notified.load(Ordering::Acquire) < limit {
+            if inner.needs_notification(limit) {
                 return inner.notify(notify);
             }
         }
@@ -993,7 +993,7 @@ impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
 }
 
 /// The state of a listener.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 enum State<T> {
     /// The listener was just created.
     Created,
@@ -1014,6 +1014,20 @@ enum State<T> {
 
     /// Empty hole used to replace a notified listener.
     NotifiedTaken,
+}
+
+impl<T> fmt::Debug for State<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Created => f.write_str("Created"),
+            Self::Notified { additional, .. } => f
+                .debug_struct("Notified")
+                .field("additional", additional)
+                .finish(),
+            Self::Task(_) => f.write_str("Task(_)"),
+            Self::NotifiedTaken => f.write_str("NotifiedTaken"),
+        }
+    }
 }
 
 impl<T> State<T> {
