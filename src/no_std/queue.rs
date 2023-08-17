@@ -58,6 +58,7 @@ impl<T> Queue<T> {
 
                 // The head was set by another thread, so we need to try again.
                 tail = self.tail.load(Ordering::Acquire);
+                continue;
             }
 
             unsafe {
