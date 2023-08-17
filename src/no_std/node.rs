@@ -9,18 +9,30 @@ use crate::sys::ListenerSlab;
 use crate::{State, Task};
 
 use alloc::boxed::Box;
-use alloc::vec::IntoIter as VecIter;
 
+use core::marker::PhantomData;
+use core::mem;
 use core::num::NonZeroUsize;
 use core::ptr;
 
-pub(crate) struct VecProducer<T>(pub(crate) VecIter<T>);
+pub(crate) struct NothingProducer<T>(PhantomData<T>);
 
-impl<T> TagProducer for VecProducer<T> {
+impl<T> Default for NothingProducer<T> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<T> TagProducer for NothingProducer<T> {
     type Tag = T;
 
     fn next_tag(&mut self) -> Self::Tag {
-        self.0.next().unwrap()
+        // This has to be a zero-sized type with no drop handler.
+        assert_eq!(mem::size_of::<Self::Tag>(), 0);
+        assert!(!mem::needs_drop::<Self::Tag>());
+
+        // SAFETY: As this is a ZST without a drop handler, zero is valid.
+        unsafe { mem::zeroed() }
     }
 }
 
@@ -35,7 +47,7 @@ pub(crate) enum Node<T> {
     },
 
     /// This node is notifying a listener.
-    Notify(GenericNotify<VecProducer<T>>),
+    Notify(GenericNotify<NothingProducer<T>>),
 
     /// This node is removing a listener.
     RemoveListener {

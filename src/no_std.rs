@@ -15,7 +15,7 @@ mod node;
 #[path = "no_std/queue.rs"]
 mod queue;
 
-use node::{Node, TaskWaiting};
+use node::{Node, NothingProducer, TaskWaiting};
 use queue::Queue;
 
 use crate::notify::{GenericNotify, Internal, Notification};
@@ -110,7 +110,7 @@ impl<T> crate::Inner<T> {
 
     /// Notifies a number of entries.
     #[cold]
-    pub(crate) fn notify(&self, mut notify: impl Notification<Tag = T>) -> usize {
+    pub(crate) fn notify(&self, notify: impl Notification<Tag = T>) -> usize {
         match self.try_lock() {
             Some(mut guard) => {
                 // Notify the listeners.
@@ -122,21 +122,7 @@ impl<T> crate::Inner<T> {
                 let node = Node::Notify(GenericNotify::new(
                     notify.count(Internal::new()),
                     notify.is_additional(Internal::new()),
-                    {
-                        // Collect every tag we need.
-                        let tags = {
-                            let count = notify.count(Internal::new());
-                            let mut tags = Vec::with_capacity(count);
-                            for _ in 0..count {
-                                tags.push(notify.next_tag(Internal::new()));
-                            }
-
-                            // Convert into an iterator.
-                            tags.into_iter()
-                        };
-
-                        node::VecProducer(tags)
-                    },
+                    NothingProducer::default(),
                 ));
 
                 self.list.queue.push(node);
