@@ -176,15 +176,18 @@ impl<T> fmt::Debug for Event<T> {
     }
 }
 
-impl<T> Default for Event<T> {
+impl Default for Event {
     #[inline]
     fn default() -> Self {
-        Self::with_tag()
+        Self::new()
     }
 }
 
 impl<T> Event<T> {
     /// Creates a new `Event` with a tag type.
+    ///
+    /// Tagging cannot be implemented efficiently on `no_std`, so this is only available when the
+    /// `std` feature is enabled.
     ///
     /// # Examples
     ///
@@ -193,6 +196,7 @@ impl<T> Event<T> {
     ///
     /// let event = Event::<usize>::with_tag();
     /// ```
+    #[cfg(feature = "std")]
     #[inline]
     pub const fn with_tag() -> Self {
         Self {
@@ -449,7 +453,9 @@ impl Event<()> {
     /// ```
     #[inline]
     pub const fn new() -> Self {
-        Self::with_tag()
+        Self {
+            inner: AtomicPtr::new(ptr::null_mut()),
+        }
     }
 
     /// Notifies a number of active listeners without emitting a `SeqCst` fence.

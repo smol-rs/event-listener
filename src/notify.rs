@@ -494,6 +494,9 @@ pub trait IntoNotification: __private::Sealed {
     /// it is possible to optimize a `Mutex` implementation by locking directly on the next listener, without
     /// needing to ever unlock the mutex at all.
     ///
+    /// Tagging functions cannot be implemented efficiently for `no_std`, so this is only available
+    /// when the `std` feature is enabled.
+    ///
     /// # Examples
     ///
     /// ```
@@ -511,6 +514,7 @@ pub trait IntoNotification: __private::Sealed {
     /// assert_eq!(listener1.as_mut().wait(), true);
     /// assert_eq!(listener2.as_mut().wait(), false);
     /// ```
+    #[cfg(feature = "std")]
     fn tag_with<T, F>(self, tag: F) -> TagWith<Self::Notify, F>
     where
         Self: Sized + IntoNotification<Tag = ()>,
