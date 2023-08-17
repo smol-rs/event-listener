@@ -127,7 +127,9 @@ impl TaskWaiting {
         // If the entry ID is non-zero, then we are no longer queued.
         if self.status().is_some() {
             // Wake the task.
-            self.task.take().unwrap().wake();
+            if let Some(task) = self.task.take() {
+                task.wake();
+            }
         }
     }
 }
