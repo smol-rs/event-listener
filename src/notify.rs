@@ -222,6 +222,7 @@ impl<N: fmt::Debug, F> fmt::Debug for TagWith<N, F> {
 
 impl<N, F> TagWith<N, F> {
     /// Create a new `TagFn` with the given tag function and notification.
+    #[cfg(feature = "std")]
     fn new(tag: F, inner: N) -> Self {
         Self { tag, inner }
     }
