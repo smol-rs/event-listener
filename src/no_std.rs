@@ -293,7 +293,7 @@ impl<T> ops::DerefMut for ListGuard<'_, T> {
 
 impl<T> Drop for ListGuard<'_, T> {
     fn drop(&mut self) {
-        loop {
+        while self.guard.is_some() {
             // Process every node left in the queue.
             self.process_nodes();
 
@@ -322,12 +322,7 @@ impl<T> Drop for ListGuard<'_, T> {
             // if so, lock it again and force a queue update.
             if !self.inner.list.queue.is_empty() {
                 self.guard = self.inner.list.inner.try_lock();
-                if self.guard.is_some() {
-                    continue;
-                }
             }
-
-            break;
         }
     }
 }
