@@ -46,7 +46,7 @@ impl<T> crate::Inner<T> {
     }
 
     pub(crate) fn needs_notification(&self, _limit: usize) -> bool {
-        // TODO: FIgure out a stable way to do this optimization.
+        // TODO: Figure out a stable way to do this optimization.
         true
     }
 
@@ -89,8 +89,7 @@ impl<T> crate::Inner<T> {
                     match self.try_lock() {
                         Some(mut list) => {
                             // Fast path removal.
-                            let state = list.remove(key, propagate);
-                            state
+                            list.remove(key, propagate)
                         }
 
                         None => {
@@ -175,8 +174,7 @@ impl<T> crate::Inner<T> {
                     match self.try_lock() {
                         Some(mut guard) => {
                             // Fast path registration.
-                            let result = guard.register(listener, task);
-                            return result;
+                            return guard.register(listener, task);
                         }
 
                         None => {
@@ -199,6 +197,8 @@ impl<T> crate::Inner<T> {
                     // Are we done yet?
                     match task_waiting.status() {
                         Some(key) => {
+                            assert!(key.get() != usize::MAX);
+
                             // We're inserted now, adjust state.
                             *listener = Some(Listener::HasNode(key));
                         }
@@ -257,13 +257,14 @@ pub(crate) struct ListGuard<'a, T> {
 impl<T> ListGuard<'_, T> {
     #[cold]
     fn process_nodes_slow(&mut self, start_node: Node<T>) {
+        let guard = self.guard.as_mut().unwrap();
+
         // Process the start node.
-        self.tasks
-            .extend(start_node.apply(self.guard.as_mut().unwrap()));
+        self.tasks.extend(start_node.apply(guard));
 
         // Process all remaining nodes.
         while let Ok(node) = self.inner.list.queue.pop() {
-            self.tasks.extend(node.apply(self.guard.as_mut().unwrap()));
+            self.tasks.extend(node.apply(guard));
         }
     }
 
@@ -292,33 +293,41 @@ impl<T> ops::DerefMut for ListGuard<'_, T> {
 
 impl<T> Drop for ListGuard<'_, T> {
     fn drop(&mut self) {
-        // Process every node left in the queue.
-        self.process_nodes();
+        loop {
+            // Process every node left in the queue.
+            self.process_nodes();
 
-        // Update the atomic `notified` counter.
-        let list = self.guard.take().unwrap();
-        let notified = if list.notified < list.len {
-            list.notified
-        } else {
-            core::usize::MAX
-        };
+            // Update the atomic `notified` counter.
+            let list = self.guard.take().unwrap();
+            let notified = if list.notified < list.len {
+                list.notified
+            } else {
+                core::usize::MAX
+            };
 
-        self.inner.notified.store(notified, Ordering::Release);
+            self.inner.notified.store(notified, Ordering::Release);
 
-        // Drop the actual lock.
-        drop(list);
+            // Drop the actual lock.
+            drop(list);
 
-        // Wakeup all tasks.
-        for task in self.tasks.drain(..) {
-            task.wake();
-        }
+            // Wakeup all tasks.
+            for task in self.tasks.drain(..) {
+                task.wake();
+            }
 
-        // There is a deadlock where a node is pushed the end of the queue after we've finished
-        // process_nodes() but before we've finished dropping the lock. This can lead to systems
-        // halting. Therefore check before we finish dropping if there is anything left in the
-        // queue, and if so, lock it again and force a queue update.
-        if !self.inner.list.queue.is_empty() {
-            self.inner.queue_update();
+            // There is a deadlock where a node is pushed to the end of the queue after we've finished
+            // process_nodes() but before we've finished dropping the lock. This can lead to some
+            // notifications not being properly delivered, or listeners not being added to the list.
+            // Therefore check before we finish dropping if there is anything left in the queue, and
+            // if so, lock it again and force a queue update.
+            if !self.inner.list.queue.is_empty() {
+                self.guard = self.inner.list.inner.try_lock();
+                if self.guard.is_some() {
+                    continue;
+                }
+            }
+
+            break;
         }
     }
 }
@@ -700,7 +709,7 @@ pub(crate) enum Listener<T> {
     Queued(Arc<TaskWaiting>),
 
     /// Eat the generic type for consistency.
-    _EatLifetime(PhantomData<T>),
+    _EatGenericType(PhantomData<T>),
 }
 
 impl<T> fmt::Debug for Listener<T> {
@@ -708,7 +717,7 @@ impl<T> fmt::Debug for Listener<T> {
         match self {
             Self::HasNode(key) => f.debug_tuple("HasNode").field(key).finish(),
             Self::Queued(tw) => f.debug_tuple("Queued").field(tw).finish(),
-            Self::_EatLifetime(_) => unreachable!(),
+            Self::_EatGenericType(_) => unreachable!(),
         }
     }
 }

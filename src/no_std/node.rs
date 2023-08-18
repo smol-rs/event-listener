@@ -50,7 +50,7 @@ pub(crate) enum Node<T> {
     #[allow(dead_code)]
     AddListener {
         /// The state of the listener that wants to be added.
-        task_waiting: WaitingListener,
+        task_waiting: Arc<TaskWaiting>,
     },
 
     /// This node is notifying a listener.
@@ -68,8 +68,6 @@ pub(crate) enum Node<T> {
     /// We are waiting for the mutex to lock, so they can manipulate it.
     Waiting(Task),
 }
-
-pub(crate) struct WaitingListener(Arc<TaskWaiting>);
 
 impl<T> fmt::Debug for Node<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -115,7 +113,7 @@ impl<T> Node<T> {
 
         (
             Self::AddListener {
-                task_waiting: WaitingListener(task_waiting.clone()),
+                task_waiting: task_waiting.clone(),
             },
             task_waiting,
         )
@@ -126,8 +124,8 @@ impl<T> Node<T> {
         match self {
             Node::AddListener { task_waiting } => {
                 // If we're cancelled, do nothing.
-                if task_waiting.0.entry_id.load(Ordering::Relaxed) == usize::MAX {
-                    return task_waiting.0.task.take().map(|t| *t);
+                if task_waiting.entry_id.load(Ordering::Relaxed) == usize::MAX {
+                    return task_waiting.task.take().map(|t| *t);
                 }
 
                 // Add a new entry to the list.
@@ -135,14 +133,14 @@ impl<T> Node<T> {
                 assert!(key.get() != usize::MAX);
 
                 // Send the new key to the listener and wake it if necessary.
-                let old_value = task_waiting.0.entry_id.swap(key.get(), Ordering::Release);
+                let old_value = task_waiting.entry_id.swap(key.get(), Ordering::Release);
 
                 // If we're cancelled, remove ourselves from the list.
                 if old_value == usize::MAX {
                     list.remove(key, false);
                 }
 
-                return task_waiting.0.task.take().map(|t| *t);
+                return task_waiting.task.take().map(|t| *t);
             }
             Node::Notify(notify) => {
                 // Notify the next `count` listeners.
