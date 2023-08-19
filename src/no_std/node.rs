@@ -2,7 +2,7 @@
 
 //! The node that makes up queues.
 
-use crate::notify::{GenericNotify, TagProducer};
+use crate::notify::{GenericNotify, Internal, NotificationPrivate, TagProducer};
 use crate::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use crate::sync::Arc;
 use crate::sys::ListenerSlab;
@@ -10,6 +10,7 @@ use crate::{State, Task};
 
 use alloc::boxed::Box;
 
+use core::fmt;
 use core::marker::PhantomData;
 use core::mem;
 use core::num::NonZeroUsize;
@@ -20,6 +21,12 @@ pub(crate) struct NothingProducer<T>(PhantomData<T>);
 impl<T> Default for NothingProducer<T> {
     fn default() -> Self {
         Self(PhantomData)
+    }
+}
+
+impl<T> fmt::Debug for NothingProducer<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NothingProducer").finish()
     }
 }
 
@@ -62,6 +69,28 @@ pub(crate) enum Node<T> {
     Waiting(Task),
 }
 
+impl<T> fmt::Debug for Node<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AddListener { .. } => f.write_str("AddListener"),
+            Self::Notify(notify) => f
+                .debug_struct("Notify")
+                .field("count", &notify.count(Internal::new()))
+                .field("is_additional", &notify.is_additional(Internal::new()))
+                .finish(),
+            Self::RemoveListener {
+                listener,
+                propagate,
+            } => f
+                .debug_struct("RemoveListener")
+                .field("listener", listener)
+                .field("propagate", propagate)
+                .finish(),
+            Self::Waiting(_) => f.write_str("Waiting"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct TaskWaiting {
     /// The task that is being waited on.
@@ -69,7 +98,8 @@ pub(crate) struct TaskWaiting {
 
     /// The ID of the new entry.
     ///
-    /// This is set to zero when the task is still queued.
+    /// This is set to zero when the task is still queued, or usize::MAX when the node should not
+    /// be added at all.
     entry_id: AtomicUsize,
 }
 
@@ -93,11 +123,22 @@ impl<T> Node<T> {
     pub(super) fn apply(self, list: &mut ListenerSlab<T>) -> Option<Task> {
         match self {
             Node::AddListener { task_waiting } => {
+                // If we're cancelled, do nothing.
+                if task_waiting.entry_id.load(Ordering::Relaxed) == usize::MAX {
+                    return task_waiting.task.take().map(|t| *t);
+                }
+
                 // Add a new entry to the list.
                 let key = list.insert(State::Created);
+                assert!(key.get() != usize::MAX);
 
                 // Send the new key to the listener and wake it if necessary.
-                task_waiting.entry_id.store(key.get(), Ordering::Release);
+                let old_value = task_waiting.entry_id.swap(key.get(), Ordering::Release);
+
+                // If we're cancelled, remove ourselves from the list.
+                if old_value == usize::MAX {
+                    list.remove(key, false);
+                }
 
                 return task_waiting.task.take().map(|t| *t);
             }
@@ -143,6 +184,23 @@ impl TaskWaiting {
                 task.wake();
             }
         }
+    }
+
+    /// Mark this listener as cancelled, indicating that it should not be inserted into the list.
+    ///
+    /// If this listener was already inserted into the list, returns the entry ID. Otherwise returns
+    /// `None`.
+    pub(crate) fn cancel(&self) -> Option<NonZeroUsize> {
+        // Set the entry ID to usize::MAX.
+        let id = self.entry_id.swap(usize::MAX, Ordering::Release);
+
+        // Wake the task.
+        if let Some(task) = self.task.take() {
+            task.wake();
+        }
+
+        // Return the entry ID if we were queued.
+        NonZeroUsize::new(id)
     }
 }
 

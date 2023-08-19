@@ -12,11 +12,7 @@
 #[path = "no_std/node.rs"]
 mod node;
 
-#[path = "no_std/queue.rs"]
-mod queue;
-
 use node::{Node, NothingProducer, TaskWaiting};
-use queue::Queue;
 
 use crate::notify::{GenericNotify, Internal, Notification};
 use crate::sync::atomic::{AtomicBool, Ordering};
@@ -39,7 +35,19 @@ impl<T> crate::Inner<T> {
         self.list.inner.try_lock().map(|guard| ListGuard {
             inner: self,
             guard: Some(guard),
+            tasks: alloc::vec![],
         })
+    }
+
+    /// Force a queue update.
+    fn queue_update(&self) {
+        // Locking and unlocking the mutex will drain the queue if there is no contention.
+        drop(self.try_lock());
+    }
+
+    pub(crate) fn needs_notification(&self, _limit: usize) -> bool {
+        // TODO: Figure out a stable way to do this optimization.
+        true
     }
 
     /// Add a new listener to the list.
@@ -60,8 +68,11 @@ impl<T> crate::Inner<T> {
             None => {
                 // Push it to the queue.
                 let (node, task_waiting) = Node::listener();
-                self.list.queue.push(node);
+                self.list.queue.push(node).unwrap();
                 *listener = Some(Listener::Queued(task_waiting));
+
+                // Force a queue update.
+                self.queue_update();
             }
         }
     }
@@ -72,40 +83,51 @@ impl<T> crate::Inner<T> {
         mut listener: Pin<&mut Option<Listener<T>>>,
         propagate: bool,
     ) -> Option<State<T>> {
-        let state = match listener.as_mut().take() {
-            Some(Listener::HasNode(key)) => {
-                match self.try_lock() {
-                    Some(mut list) => {
-                        // Fast path removal.
-                        list.remove(key, propagate)
-                    }
+        loop {
+            let state = match listener.as_mut().take() {
+                Some(Listener::HasNode(key)) => {
+                    match self.try_lock() {
+                        Some(mut list) => {
+                            // Fast path removal.
+                            list.remove(key, propagate)
+                        }
 
-                    None => {
-                        // Slow path removal.
-                        // This is why intrusive lists don't work on no_std.
-                        let node = Node::RemoveListener {
-                            listener: key,
-                            propagate,
-                        };
+                        None => {
+                            // Slow path removal.
+                            // This is why intrusive lists don't work on no_std.
+                            let node = Node::RemoveListener {
+                                listener: key,
+                                propagate,
+                            };
 
-                        self.list.queue.push(node);
+                            self.list.queue.push(node).unwrap();
 
-                        None
+                            // Force a queue update.
+                            self.queue_update();
+
+                            None
+                        }
                     }
                 }
-            }
 
-            Some(Listener::Queued(_)) => {
-                // This won't be added after we drop the lock.
-                None
-            }
+                Some(Listener::Queued(tw)) => {
+                    // Make sure it's not added after the queue is drained.
+                    if let Some(key) = tw.cancel() {
+                        // If it was already added, set up our listener and try again.
+                        *listener = Some(Listener::HasNode(key));
+                        continue;
+                    }
 
-            None => None,
+                    None
+                }
 
-            _ => unreachable!(),
-        };
+                None => None,
 
-        state
+                _ => unreachable!(),
+            };
+
+            return state;
+        }
     }
 
     /// Notifies a number of entries.
@@ -125,7 +147,10 @@ impl<T> crate::Inner<T> {
                     NothingProducer::default(),
                 ));
 
-                self.list.queue.push(node);
+                self.list.queue.push(node).unwrap();
+
+                // Force a queue update.
+                self.queue_update();
 
                 // We haven't notified anyone yet.
                 0
@@ -155,16 +180,25 @@ impl<T> crate::Inner<T> {
                         None => {
                             // Wait for the lock.
                             let node = Node::Waiting(task.into_task());
-                            self.list.queue.push(node);
+                            self.list.queue.push(node).unwrap();
+
+                            // Force a queue update.
+                            self.queue_update();
+
                             return RegisterResult::Registered;
                         }
                     }
                 }
 
                 Some(Listener::Queued(task_waiting)) => {
+                    // Force a queue update.
+                    self.queue_update();
+
                     // Are we done yet?
                     match task_waiting.status() {
                         Some(key) => {
+                            assert!(key.get() != usize::MAX);
+
                             // We're inserted now, adjust state.
                             *listener = Some(Listener::HasNode(key));
                         }
@@ -173,6 +207,10 @@ impl<T> crate::Inner<T> {
                             // We're still queued, so register the task.
                             task_waiting.register(task.into_task());
                             *listener = Some(Listener::Queued(task_waiting));
+
+                            // Force a queue update.
+                            self.queue_update();
+
                             return RegisterResult::Registered;
                         }
                     }
@@ -186,19 +224,20 @@ impl<T> crate::Inner<T> {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct List<T> {
     /// The inner list.
     inner: Mutex<ListenerSlab<T>>,
 
     /// The queue of pending operations.
-    queue: Queue<T>,
+    queue: concurrent_queue::ConcurrentQueue<Node<T>>,
 }
 
 impl<T> List<T> {
     pub(super) fn new() -> List<T> {
         List {
             inner: Mutex::new(ListenerSlab::new()),
-            queue: Queue::new(),
+            queue: concurrent_queue::ConcurrentQueue::unbounded(),
         }
     }
 }
@@ -210,22 +249,30 @@ pub(crate) struct ListGuard<'a, T> {
 
     /// The locked list.
     pub(crate) guard: Option<MutexGuard<'a, ListenerSlab<T>>>,
+
+    /// Tasks to wake up once this guard is dropped.
+    tasks: Vec<Task>,
 }
 
 impl<T> ListGuard<'_, T> {
     #[cold]
-    fn process_nodes_slow(
-        &mut self,
-        start_node: Node<T>,
-        tasks: &mut Vec<Task>,
-        guard: &mut MutexGuard<'_, ListenerSlab<T>>,
-    ) {
+    fn process_nodes_slow(&mut self, start_node: Node<T>) {
+        let guard = self.guard.as_mut().unwrap();
+
         // Process the start node.
-        tasks.extend(start_node.apply(guard));
+        self.tasks.extend(start_node.apply(guard));
 
         // Process all remaining nodes.
-        while let Some(node) = self.inner.list.queue.pop() {
-            tasks.extend(node.apply(guard));
+        while let Ok(node) = self.inner.list.queue.pop() {
+            self.tasks.extend(node.apply(guard));
+        }
+    }
+
+    #[inline]
+    fn process_nodes(&mut self) {
+        // Process every node left in the queue.
+        if let Ok(start_node) = self.inner.list.queue.pop() {
+            self.process_nodes_slow(start_node);
         }
     }
 }
@@ -246,32 +293,36 @@ impl<T> ops::DerefMut for ListGuard<'_, T> {
 
 impl<T> Drop for ListGuard<'_, T> {
     fn drop(&mut self) {
-        let Self { inner, guard } = self;
-        let mut list = guard.take().unwrap();
+        while self.guard.is_some() {
+            // Process every node left in the queue.
+            self.process_nodes();
 
-        // Tasks to wakeup after releasing the lock.
-        let mut tasks = alloc::vec![];
+            // Update the atomic `notified` counter.
+            let list = self.guard.take().unwrap();
+            let notified = if list.notified < list.len {
+                list.notified
+            } else {
+                core::usize::MAX
+            };
 
-        // Process every node left in the queue.
-        if let Some(start_node) = inner.list.queue.pop() {
-            self.process_nodes_slow(start_node, &mut tasks, &mut list);
-        }
+            self.inner.notified.store(notified, Ordering::Release);
 
-        // Update the atomic `notified` counter.
-        let notified = if list.notified < list.len {
-            list.notified
-        } else {
-            core::usize::MAX
-        };
+            // Drop the actual lock.
+            drop(list);
 
-        self.inner.notified.store(notified, Ordering::Release);
+            // Wakeup all tasks.
+            for task in self.tasks.drain(..) {
+                task.wake();
+            }
 
-        // Drop the actual lock.
-        drop(list);
-
-        // Wakeup all tasks.
-        for task in tasks {
-            task.wake();
+            // There is a deadlock where a node is pushed to the end of the queue after we've finished
+            // process_nodes() but before we've finished dropping the lock. This can lead to some
+            // notifications not being properly delivered, or listeners not being added to the list.
+            // Therefore check before we finish dropping if there is anything left in the queue, and
+            // if so, lock it again and force a queue update.
+            if !self.inner.list.queue.is_empty() {
+                self.guard = self.inner.list.inner.try_lock();
+            }
         }
     }
 }
@@ -309,7 +360,7 @@ impl<T> Drop for TakenState<'_, T> {
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for TakenState<'_, T> {
+impl<T> fmt::Debug for TakenState<'_, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self.state, f)
     }
@@ -328,7 +379,7 @@ impl<'a, T> TakenState<'a, T> {
     }
 }
 
-impl<T: fmt::Debug> fmt::Debug for Entry<T> {
+impl<T> fmt::Debug for Entry<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Entry::Listener { state, next, prev } => f
@@ -417,6 +468,20 @@ pub(crate) struct ListenerSlab<T> {
     /// The index of the first `Empty` entry, or the length of the list plus one if there
     /// are no empty entries.
     first_empty: NonZeroUsize,
+}
+
+impl<T> fmt::Debug for ListenerSlab<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ListenerSlab")
+            .field("listeners", &self.listeners)
+            .field("head", &self.head)
+            .field("tail", &self.tail)
+            .field("start", &self.start)
+            .field("notified", &self.notified)
+            .field("len", &self.len)
+            .field("first_empty", &self.first_empty)
+            .finish()
+    }
 }
 
 impl<T> ListenerSlab<T> {
@@ -530,7 +595,6 @@ impl<T> ListenerSlab<T> {
                 if let State::Notified { tag, additional } = state {
                     let tags = {
                         let mut tag = Some(tag);
-
                         move || tag.take().expect("called more than once")
                     };
 
@@ -632,7 +696,6 @@ impl<T> ListenerSlab<T> {
     }
 }
 
-#[derive(Debug)]
 pub(crate) enum Listener<T> {
     /// The listener has a node inside of the linked list.
     HasNode(NonZeroUsize),
@@ -640,8 +703,18 @@ pub(crate) enum Listener<T> {
     /// The listener has an entry in the queue that may or may not have a task waiting.
     Queued(Arc<TaskWaiting>),
 
-    /// Eat the lifetime for consistency.
-    _EatLifetime(PhantomData<T>),
+    /// Eat the generic type for consistency.
+    _EatGenericType(PhantomData<T>),
+}
+
+impl<T> fmt::Debug for Listener<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HasNode(key) => f.debug_tuple("HasNode").field(key).finish(),
+            Self::Queued(tw) => f.debug_tuple("Queued").field(tw).finish(),
+            Self::_EatGenericType(_) => unreachable!(),
+        }
+    }
 }
 
 impl<T> Unpin for Listener<T> {}
@@ -663,6 +736,16 @@ pub(crate) struct Mutex<T> {
 
     /// Whether the mutex is locked.
     locked: AtomicBool,
+}
+
+impl<T: fmt::Debug> fmt::Debug for Mutex<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(lock) = self.try_lock() {
+            f.debug_tuple("Mutex").field(&*lock).finish()
+        } else {
+            f.write_str("Mutex { <locked> }")
+        }
+    }
 }
 
 impl<T> Mutex<T> {
