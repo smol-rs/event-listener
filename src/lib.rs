@@ -165,10 +165,8 @@ pub struct Event<T = ()> {
 unsafe impl<T: Send> Send for Event<T> {}
 unsafe impl<T: Send> Sync for Event<T> {}
 
-#[cfg(feature = "std")]
-impl<T> std::panic::UnwindSafe for Event<T> {}
-#[cfg(feature = "std")]
-impl<T> std::panic::RefUnwindSafe for Event<T> {}
+impl<T> core::panic::UnwindSafe for Event<T> {}
+impl<T> core::panic::RefUnwindSafe for Event<T> {}
 
 impl<T> fmt::Debug for Event<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
