@@ -348,7 +348,11 @@ mod tests {
         };
     }
 
-    #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
+    #[cfg_attr(
+        any(target_arch = "wasm32", target_arch = "wasm64"),
+        wasm_bindgen_test::wasm_bindgen_test
+    )]
     fn insert() {
         let inner = crate::Inner::new();
         make_listeners!(listen1, listen2, listen3);
@@ -369,7 +373,11 @@ mod tests {
         assert_eq!(inner.lock().len, 1);
     }
 
-    #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
+    #[cfg_attr(
+        any(target_arch = "wasm32", target_arch = "wasm64"),
+        wasm_bindgen_test::wasm_bindgen_test
+    )]
     fn drop_non_notified() {
         let inner = crate::Inner::new();
         make_listeners!(listen1, listen2, listen3);

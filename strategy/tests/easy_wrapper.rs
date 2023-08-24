@@ -4,7 +4,11 @@ use std::{marker::PhantomData, pin::Pin, task::Poll};
 
 use event_listener_strategy::{easy_wrapper, EventListenerFuture, Strategy};
 
-#[test]
+#[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
+#[cfg_attr(
+    any(target_arch = "wasm32", target_arch = "wasm64"),
+    wasm_bindgen_test::wasm_bindgen_test
+)]
 fn easy_wrapper_generics() {
     // Easy case.
     struct MyStrategy;

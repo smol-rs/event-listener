@@ -829,7 +829,11 @@ mod tests {
     use super::*;
     use crate::Task;
 
-    #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
+    #[cfg_attr(
+        any(target_arch = "wasm32", target_arch = "wasm64"),
+        wasm_bindgen_test::wasm_bindgen_test
+    )]
     fn smoke_mutex() {
         let mutex = Mutex::new(0);
 
@@ -847,7 +851,11 @@ mod tests {
         assert_eq!(*guard, 2);
     }
 
-    #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
+    #[cfg_attr(
+        any(target_arch = "wasm32", target_arch = "wasm64"),
+        wasm_bindgen_test::wasm_bindgen_test
+    )]
     fn smoke_listener_slab() {
         let mut listeners = ListenerSlab::<()>::new();
 
@@ -920,7 +928,11 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
+    #[cfg_attr(
+        any(target_arch = "wasm32", target_arch = "wasm64"),
+        wasm_bindgen_test::wasm_bindgen_test
+    )]
     fn listener_slab_notify() {
         let mut listeners = ListenerSlab::new();
 
@@ -1005,7 +1017,11 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
+    #[cfg_attr(
+        any(target_arch = "wasm32", target_arch = "wasm64"),
+        wasm_bindgen_test::wasm_bindgen_test
+    )]
     fn listener_slab_register() {
         let woken = Arc::new(AtomicBool::new(false));
         let waker = waker_fn::waker_fn({
@@ -1112,7 +1128,11 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
+    #[cfg_attr(
+        any(target_arch = "wasm32", target_arch = "wasm64"),
+        wasm_bindgen_test::wasm_bindgen_test
+    )]
     fn listener_slab_notify_prop() {
         let woken = Arc::new(AtomicBool::new(false));
         let waker = waker_fn::waker_fn({
@@ -1357,7 +1377,11 @@ mod tests {
         );
     }
 
-    #[test]
+    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
+    #[cfg_attr(
+        any(target_arch = "wasm32", target_arch = "wasm64"),
+        wasm_bindgen_test::wasm_bindgen_test
+    )]
     fn uncontended_inner() {
         let inner = crate::Inner::new();
 
