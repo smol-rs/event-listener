@@ -2,7 +2,7 @@
 //!
 //! This mutex exposes both blocking and async methods for acquiring a lock.
 
-#[cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))]
+#[cfg(not(target_family = "wasm"))]
 mod example {
     #![allow(dead_code)]
 
@@ -185,7 +185,7 @@ mod example {
     }
 }
 
-#[cfg(any(target_arch = "wasm32", target_arch = "wasm64"))]
+#[cfg(target_family = "wasm")]
 mod example {
     pub(super) fn entry() {
         println!("This example is not supported on wasm yet.");

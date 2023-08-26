@@ -24,7 +24,7 @@ concurrent-queue = { version = "2.2.0", default-features = false }
 pin-project-lite = "0.2.12"
 portable-atomic-util = { version = "0.1.2", default-features = false, optional = true, features = ["alloc"] }
 
-[target.'cfg(not(any(target_arch = "wasm32", target_arch = "wasm64")))'.dependencies]
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
 parking = { version = "2.0.0", optional = true }
 
 [dependencies.portable_atomic_crate]
@@ -42,7 +42,7 @@ version = "0.4.0"
 default-features = false
 features = ["cargo_bench_support"]
 
-[target.'cfg(any(target_arch = "wasm32", target_arch = "wasm64"))'.dev-dependencies]
+[target.'cfg(target_family = "wasm")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
 
 [[bench]]

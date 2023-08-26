@@ -339,6 +339,9 @@ mod tests {
     use super::*;
     use futures_lite::pin;
 
+    #[cfg(target_family = "wasm")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
+
     macro_rules! make_listeners {
         ($($id:ident),*) => {
             $(
@@ -348,11 +351,7 @@ mod tests {
         };
     }
 
-    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-    #[cfg_attr(
-        any(target_arch = "wasm32", target_arch = "wasm64"),
-        wasm_bindgen_test::wasm_bindgen_test
-    )]
+    #[test]
     fn insert() {
         let inner = crate::Inner::new();
         make_listeners!(listen1, listen2, listen3);
@@ -373,11 +372,7 @@ mod tests {
         assert_eq!(inner.lock().len, 1);
     }
 
-    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-    #[cfg_attr(
-        any(target_arch = "wasm32", target_arch = "wasm64"),
-        wasm_bindgen_test::wasm_bindgen_test
-    )]
+    #[test]
     fn drop_non_notified() {
         let inner = crate::Inner::new();
         make_listeners!(listen1, listen2, listen3);

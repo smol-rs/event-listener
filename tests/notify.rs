@@ -7,16 +7,15 @@ use std::usize;
 use event_listener::{Event, EventListener};
 use waker_fn::waker_fn;
 
+#[cfg(target_family = "wasm")]
+use wasm_bindgen_test::wasm_bindgen_test as test;
+
 fn is_notified(listener: Pin<&mut EventListener>) -> bool {
     let waker = waker_fn(|| ());
     listener.poll(&mut Context::from_waker(&waker)).is_ready()
 }
 
-#[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-#[cfg_attr(
-    any(target_arch = "wasm32", target_arch = "wasm64"),
-    wasm_bindgen_test::wasm_bindgen_test
-)]
+#[test]
 fn notify() {
     let event = Event::new();
 
@@ -36,11 +35,7 @@ fn notify() {
     assert!(!is_notified(l3.as_mut()));
 }
 
-#[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-#[cfg_attr(
-    any(target_arch = "wasm32", target_arch = "wasm64"),
-    wasm_bindgen_test::wasm_bindgen_test
-)]
+#[test]
 fn notify_additional() {
     let event = Event::new();
 
@@ -57,11 +52,7 @@ fn notify_additional() {
     assert!(!is_notified(l3.as_mut()));
 }
 
-#[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-#[cfg_attr(
-    any(target_arch = "wasm32", target_arch = "wasm64"),
-    wasm_bindgen_test::wasm_bindgen_test
-)]
+#[test]
 fn notify_one() {
     let event = Event::new();
 
@@ -79,11 +70,7 @@ fn notify_one() {
     assert!(is_notified(l2.as_mut()));
 }
 
-#[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-#[cfg_attr(
-    any(target_arch = "wasm32", target_arch = "wasm64"),
-    wasm_bindgen_test::wasm_bindgen_test
-)]
+#[test]
 fn notify_all() {
     let event = Event::new();
 
@@ -98,11 +85,7 @@ fn notify_all() {
     assert!(is_notified(l2.as_mut()));
 }
 
-#[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-#[cfg_attr(
-    any(target_arch = "wasm32", target_arch = "wasm64"),
-    wasm_bindgen_test::wasm_bindgen_test
-)]
+#[test]
 fn drop_notified() {
     let event = Event::new();
 
@@ -116,11 +99,7 @@ fn drop_notified() {
     assert!(!is_notified(l3.as_mut()));
 }
 
-#[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-#[cfg_attr(
-    any(target_arch = "wasm32", target_arch = "wasm64"),
-    wasm_bindgen_test::wasm_bindgen_test
-)]
+#[test]
 fn drop_notified2() {
     let event = Event::new();
 
@@ -134,11 +113,7 @@ fn drop_notified2() {
     assert!(!is_notified(l3.as_mut()));
 }
 
-#[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-#[cfg_attr(
-    any(target_arch = "wasm32", target_arch = "wasm64"),
-    wasm_bindgen_test::wasm_bindgen_test
-)]
+#[test]
 fn drop_notified_additional() {
     let event = Event::new();
 
@@ -155,11 +130,7 @@ fn drop_notified_additional() {
     assert!(!is_notified(l4.as_mut()));
 }
 
-#[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-#[cfg_attr(
-    any(target_arch = "wasm32", target_arch = "wasm64"),
-    wasm_bindgen_test::wasm_bindgen_test
-)]
+#[test]
 fn drop_non_notified() {
     let event = Event::new();
 
@@ -173,11 +144,7 @@ fn drop_non_notified() {
     assert!(!is_notified(l2.as_mut()));
 }
 
-#[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-#[cfg_attr(
-    any(target_arch = "wasm32", target_arch = "wasm64"),
-    wasm_bindgen_test::wasm_bindgen_test
-)]
+#[test]
 fn notify_all_fair() {
     let event = Event::new();
     let v = Arc::new(Mutex::new(vec![]));

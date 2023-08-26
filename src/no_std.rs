@@ -829,11 +829,10 @@ mod tests {
     use super::*;
     use crate::Task;
 
-    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-    #[cfg_attr(
-        any(target_arch = "wasm32", target_arch = "wasm64"),
-        wasm_bindgen_test::wasm_bindgen_test
-    )]
+    #[cfg(target_family = "wasm")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
+
+    #[test]
     fn smoke_mutex() {
         let mutex = Mutex::new(0);
 
@@ -851,11 +850,7 @@ mod tests {
         assert_eq!(*guard, 2);
     }
 
-    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-    #[cfg_attr(
-        any(target_arch = "wasm32", target_arch = "wasm64"),
-        wasm_bindgen_test::wasm_bindgen_test
-    )]
+    #[test]
     fn smoke_listener_slab() {
         let mut listeners = ListenerSlab::<()>::new();
 
@@ -928,11 +923,7 @@ mod tests {
         );
     }
 
-    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-    #[cfg_attr(
-        any(target_arch = "wasm32", target_arch = "wasm64"),
-        wasm_bindgen_test::wasm_bindgen_test
-    )]
+    #[test]
     fn listener_slab_notify() {
         let mut listeners = ListenerSlab::new();
 
@@ -1017,11 +1008,7 @@ mod tests {
         );
     }
 
-    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-    #[cfg_attr(
-        any(target_arch = "wasm32", target_arch = "wasm64"),
-        wasm_bindgen_test::wasm_bindgen_test
-    )]
+    #[test]
     fn listener_slab_register() {
         let woken = Arc::new(AtomicBool::new(false));
         let waker = waker_fn::waker_fn({
@@ -1128,11 +1115,7 @@ mod tests {
         );
     }
 
-    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-    #[cfg_attr(
-        any(target_arch = "wasm32", target_arch = "wasm64"),
-        wasm_bindgen_test::wasm_bindgen_test
-    )]
+    #[test]
     fn listener_slab_notify_prop() {
         let woken = Arc::new(AtomicBool::new(false));
         let waker = waker_fn::waker_fn({
@@ -1377,11 +1360,7 @@ mod tests {
         );
     }
 
-    #[cfg_attr(not(any(target_arch = "wasm32", target_arch = "wasm64")), test)]
-    #[cfg_attr(
-        any(target_arch = "wasm32", target_arch = "wasm64"),
-        wasm_bindgen_test::wasm_bindgen_test
-    )]
+    #[test]
     fn uncontended_inner() {
         let inner = crate::Inner::new();
 
