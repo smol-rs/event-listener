@@ -7,6 +7,9 @@ use std::usize;
 use event_listener::{Event, EventListener};
 use waker_fn::waker_fn;
 
+#[cfg(target_family = "wasm")]
+use wasm_bindgen_test::wasm_bindgen_test as test;
+
 fn is_notified(listener: Pin<&mut EventListener>) -> bool {
     let waker = waker_fn(|| ());
     listener.poll(&mut Context::from_waker(&waker)).is_ready()

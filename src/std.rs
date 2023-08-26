@@ -339,6 +339,9 @@ mod tests {
     use super::*;
     use futures_lite::pin;
 
+    #[cfg(target_family = "wasm")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
+
     macro_rules! make_listeners {
         ($($id:ident),*) => {
             $(

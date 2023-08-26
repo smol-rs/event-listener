@@ -829,6 +829,9 @@ mod tests {
     use super::*;
     use crate::Task;
 
+    #[cfg(target_family = "wasm")]
+    use wasm_bindgen_test::wasm_bindgen_test as test;
+
     #[test]
     fn smoke_mutex() {
         let mutex = Mutex::new(0);

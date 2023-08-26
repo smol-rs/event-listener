@@ -94,10 +94,11 @@ use core::pin::Pin;
 use core::ptr;
 use core::task::{Context, Poll, Waker};
 
-#[cfg(feature = "std")]
-use parking::{Parker, Unparker};
-#[cfg(feature = "std")]
-use std::time::{Duration, Instant};
+#[cfg(all(feature = "std", not(target_family = "wasm"),))]
+use {
+    parking::{Parker, Unparker},
+    std::time::{Duration, Instant},
+};
 
 use sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use sync::{Arc, WithMut};
@@ -719,7 +720,7 @@ impl<T> EventListener<T> {
     /// // Receive the notification.
     /// listener.as_mut().wait();
     /// ```
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", not(target_family = "wasm"),))]
     pub fn wait(self: Pin<&mut Self>) -> T {
         self.listener().wait_internal(None).unwrap()
     }
@@ -740,7 +741,7 @@ impl<T> EventListener<T> {
     /// // There are no notification so this times out.
     /// assert!(listener.as_mut().wait_timeout(Duration::from_secs(1)).is_none());
     /// ```
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", not(target_family = "wasm"),))]
     pub fn wait_timeout(self: Pin<&mut Self>, timeout: Duration) -> Option<T> {
         self.listener()
             .wait_internal(Instant::now().checked_add(timeout))
@@ -762,7 +763,7 @@ impl<T> EventListener<T> {
     /// // There are no notification so this times out.
     /// assert!(listener.as_mut().wait_deadline(Instant::now() + Duration::from_secs(1)).is_none());
     /// ```
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", not(target_family = "wasm"),))]
     pub fn wait_deadline(self: Pin<&mut Self>, deadline: Instant) -> Option<T> {
         self.listener().wait_internal(Some(deadline))
     }
@@ -881,7 +882,7 @@ impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
     }
 
     /// Wait until the provided deadline.
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", not(target_family = "wasm"),))]
     fn wait_internal(mut self: Pin<&mut Self>, deadline: Option<Instant>) -> Option<T> {
         use std::cell::RefCell;
 
@@ -915,7 +916,7 @@ impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
     }
 
     /// Wait until the provided deadline using the specified parker/unparker pair.
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", not(target_family = "wasm"),))]
     fn wait_with_parker(
         self: Pin<&mut Self>,
         deadline: Option<Instant>,
@@ -1077,7 +1078,7 @@ enum Task {
     Waker(Waker),
 
     /// An unparker that wakes up a thread.
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", not(target_family = "wasm"),))]
     Unparker(Unparker),
 }
 
@@ -1085,7 +1086,7 @@ impl Task {
     fn as_task_ref(&self) -> TaskRef<'_> {
         match self {
             Self::Waker(waker) => TaskRef::Waker(waker),
-            #[cfg(feature = "std")]
+            #[cfg(all(feature = "std", not(target_family = "wasm"),))]
             Self::Unparker(unparker) => TaskRef::Unparker(unparker),
         }
     }
@@ -1093,7 +1094,7 @@ impl Task {
     fn wake(self) {
         match self {
             Self::Waker(waker) => waker.wake(),
-            #[cfg(feature = "std")]
+            #[cfg(all(feature = "std", not(target_family = "wasm"),))]
             Self::Unparker(unparker) => {
                 unparker.unpark();
             }
@@ -1114,7 +1115,7 @@ enum TaskRef<'a> {
     Waker(&'a Waker),
 
     /// An unparker that wakes up a thread.
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", not(target_family = "wasm"),))]
     Unparker(&'a Unparker),
 }
 
@@ -1124,7 +1125,7 @@ impl TaskRef<'_> {
     fn will_wake(self, other: Self) -> bool {
         match (self, other) {
             (Self::Waker(a), Self::Waker(b)) => a.will_wake(b),
-            #[cfg(feature = "std")]
+            #[cfg(all(feature = "std", not(target_family = "wasm"),))]
             (Self::Unparker(_), Self::Unparker(_)) => {
                 // TODO: Use unreleased will_unpark API.
                 false
@@ -1137,7 +1138,7 @@ impl TaskRef<'_> {
     fn into_task(self) -> Task {
         match self {
             Self::Waker(waker) => Task::Waker(waker.clone()),
-            #[cfg(feature = "std")]
+            #[cfg(all(feature = "std", not(target_family = "wasm"),))]
             Self::Unparker(unparker) => Task::Unparker(unparker.clone()),
         }
     }
