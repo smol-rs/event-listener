@@ -52,5 +52,3 @@ harness = false
 [lib]
 bench = false
 
-[workspace]
-members = ["strategy"]
