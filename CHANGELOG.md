@@ -1,3 +1,15 @@
+# Version 3.0.0
+
+- Use the `parking` crate instead of threading APIs (#27)
+- Bump MSRV to 1.59 (#71)
+- **Breaking:** Make this crate `no_std`-compatible on `default-features = false`. (#34)
+- Create a new `event-listener-strategy` crate for abstracting over blocking/non-blocking operations. (#49)
+- **Breaking:** Change the `EventListener` API to be `!Unpin`. (#51)
+- Enable a feature for the `portable-atomic` crate. (#53)
+- **Breaking:** Add a `Notification` trait which is used to enable tagged events. (#52)
+- Add an `is_notified()` method to `Event`. (#48)
+- **Breaking:** Make it so `notify()` returns the number of listeners notified. (#57)
+
 # Version 2.5.3
 
 - Fix fence on x86 and miri.
