@@ -218,12 +218,20 @@ impl<T> AtomicCell<T> {
 
     /// Swap the value out.
     fn replace(&self, value: Option<Box<T>>) -> Option<Box<T>> {
-        let value = value.map_or(ptr::null_mut(), |value| Box::into_raw(value));
-        let old_value = self.0.swap(value, Ordering::SeqCst);
+        let old_value = match value {
+            Some(value) => self.0.swap(Box::into_raw(value), Ordering::AcqRel),
+            // Acquire is needed to synchronize with the store of a non-null ptr, but since a null ptr
+            // will never be dereferenced, there is no need to synchronize the store of a null ptr.
+            None => self.0.swap(ptr::null_mut(), Ordering::Acquire),
+        };
 
         if old_value.is_null() {
             None
         } else {
+            // SAFETY:
+            // - AcqRel/Acquire ensures that it does not read a pointer to potentially invalid memory.
+            // - We've checked that old_value is not null.
+            // - We do not store invalid pointers other than null in self.0.
             Some(unsafe { Box::from_raw(old_value) })
         }
     }
