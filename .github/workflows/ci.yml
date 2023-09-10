@@ -1,16 +1,28 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   pull_request:
   push:
     branches:
       - master
   schedule:
-    - cron: '0 2 * * *'
+    - cron: '0 2 * * 0'
 
 env:
-  RUSTFLAGS: -D warnings
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+  RUSTUP_MAX_RETRIES: 10
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   test:
@@ -21,7 +33,7 @@ jobs:
         os: [ubuntu-latest]
         rust: [nightly, beta, stable]
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
       - run: cargo build --all --all-features --all-targets
@@ -35,10 +47,10 @@ jobs:
     strategy:
       matrix:
         # When updating this, the reminder to update the minimum supported
-        # Rust version in Cargo.toml and .clippy.toml.
-        rust: ['1.36']
+        # Rust version in Cargo.toml.
+        rust: ['1.39']
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
       - run: cargo build
@@ -46,7 +58,7 @@ jobs:
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: rustup update stable
       - run: cargo clippy --all-features --all-targets
@@ -54,7 +66,7 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: rustup update stable
       - run: cargo fmt --all --check
@@ -62,7 +74,7 @@ jobs:
   miri:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: rustup toolchain install nightly --component miri && rustup default nightly
       - run: cargo miri test
@@ -71,9 +83,14 @@ jobs:
           RUSTFLAGS: ${{ env.RUSTFLAGS }} -Z randomize-layout
 
   security_audit:
+    permissions:
+      checks: write
+      contents: read
+      issues: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/audit-check@v1
+      # https://github.com/rustsec/audit-check/issues/2
+      - uses: rustsec/audit-check@master
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
