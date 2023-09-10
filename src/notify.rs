@@ -1,6 +1,7 @@
 //! The `Notification` trait for specifying notification.
 
 use crate::sync::atomic::{self, Ordering};
+#[cfg(feature = "std")]
 use core::fmt;
 
 pub(crate) use __private::Internal;
@@ -155,6 +156,7 @@ where
 }
 
 /// Use a tag to notify listeners.
+#[cfg(feature = "std")]
 #[derive(Debug, Clone)]
 #[doc(hidden)]
 pub struct Tag<N: ?Sized, T> {
@@ -162,6 +164,7 @@ pub struct Tag<N: ?Sized, T> {
     inner: N,
 }
 
+#[cfg(feature = "std")]
 impl<N: ?Sized, T> Tag<N, T> {
     /// Create a new `Tag` with the given tag and notification.
     fn new(tag: T, inner: N) -> Self
@@ -172,6 +175,7 @@ impl<N: ?Sized, T> Tag<N, T> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<N, T> NotificationPrivate for Tag<N, T>
 where
     N: Notification + ?Sized,
@@ -197,12 +201,14 @@ where
 }
 
 /// Use a function to generate a tag to notify listeners.
+#[cfg(feature = "std")]
 #[doc(hidden)]
 pub struct TagWith<N: ?Sized, F> {
     tag: F,
     inner: N,
 }
 
+#[cfg(feature = "std")]
 impl<N: fmt::Debug, F> fmt::Debug for TagWith<N, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         struct Ellipses;
@@ -220,14 +226,15 @@ impl<N: fmt::Debug, F> fmt::Debug for TagWith<N, F> {
     }
 }
 
+#[cfg(feature = "std")]
 impl<N, F> TagWith<N, F> {
     /// Create a new `TagFn` with the given tag function and notification.
-    #[cfg(feature = "std")]
     fn new(tag: F, inner: N) -> Self {
         Self { tag, inner }
     }
 }
 
+#[cfg(feature = "std")]
 impl<N, F, T> NotificationPrivate for TagWith<N, F>
 where
     N: Notification + ?Sized,
@@ -466,6 +473,9 @@ pub trait IntoNotification: __private::Sealed {
     /// The tag provided is cloned to provide the tag for all listeners. In cases where this is not flexible
     /// enough, use [`IntoNotification::with_tag()`] instead.
     ///
+    /// Tagging functions cannot be implemented efficiently for `no_std`, so this is only available
+    /// when the `std` feature is enabled.
+    ///
     /// # Examples
     ///
     /// ```
@@ -483,6 +493,7 @@ pub trait IntoNotification: __private::Sealed {
     /// assert_eq!(listener1.as_mut().wait(), true);
     /// assert_eq!(listener2.as_mut().wait(), false);
     /// ```
+    #[cfg(feature = "std")]
     fn tag<T: Clone>(self, tag: T) -> Tag<Self::Notify, T>
     where
         Self: Sized + IntoNotification<Tag = ()>,
