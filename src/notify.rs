@@ -558,7 +558,6 @@ macro_rules! impl_for_numeric_types {
                     panic!("negative notification count");
                 }
 
-                use core::convert::TryInto;
                 Notify::new(self.try_into().expect("overflow"))
             }
         }
