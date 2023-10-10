@@ -234,11 +234,11 @@ impl<T> Event<T> {
     }
 
     pub fn add_listener(&self) {
-        self.listener_count.fetch_add(1, Ordering::Relaxed);
+        self.listener_count.fetch_add(1, Ordering::Relaxed); // incerment
     }
 
     pub fn remove_listener(&self) {
-        self.listener_count.fetch_sub(1, Ordering::Relaxed);
+        self.listener_count.fetch_sub(1, Ordering::Relaxed); // decrement
     }
     /// Tell whether any listeners are currently notified.
     ///
