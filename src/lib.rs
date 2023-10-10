@@ -161,6 +161,7 @@ pub struct Event<T = ()> {
     /// is an `Arc<Inner>` so it's important to keep in mind that it contributes to the [`Arc`]'s
     /// reference count.
     inner: AtomicPtr<Inner<T>>,
+    listener_count: AtomicUsize,
 }
 
 unsafe impl<T: Send> Send for Event<T> {}
@@ -169,9 +170,37 @@ unsafe impl<T: Send> Sync for Event<T> {}
 impl<T> core::panic::UnwindSafe for Event<T> {}
 impl<T> core::panic::RefUnwindSafe for Event<T> {}
 
+struct EventDebugInfo {
+    notified_listeners: usize,
+    total_listeners: usize,
+}
+
+impl fmt::Debug for EventDebugInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "Event {{ Notified Listeners: {}, Total Listeners: {} }}",
+            self.notified_listeners,
+            self.total_listeners
+        )
+    }
+}
+
 impl<T> fmt::Debug for Event<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Event { .. }")
+        if let Some(inner) = self.try_inner() {
+            let notified_listeners = inner.notified.load(Ordering::Acquire);
+            let total_listeners = self.listener_count.load(Ordering::Relaxed); // Access listener_count directly
+
+            let debug_info = EventDebugInfo {
+                notified_listeners,
+                total_listeners,
+            };
+
+            debug_info.fmt(f)
+        } else {
+            f.write_str("Event { Not Initialized }")
+        }
     }
 }
 
@@ -200,9 +229,17 @@ impl<T> Event<T> {
     pub const fn with_tag() -> Self {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
+            listener_count: AtomicUsize::new(0),
         }
     }
 
+    pub fn add_listener(&self) {
+        self.listener_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn remove_listener(&self) {
+        self.listener_count.fetch_sub(1, Ordering::Relaxed);
+    }
     /// Tell whether any listeners are currently notified.
     ///
     /// # Examples
@@ -454,9 +491,10 @@ impl Event<()> {
     pub const fn new() -> Self {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
+            listener_count: AtomicUsize::new(0),
         }
     }
-
+    
     /// Notifies a number of active listeners without emitting a `SeqCst` fence.
     ///
     /// The number is allowed to be zero or exceed the current number of listeners.
