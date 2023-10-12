@@ -241,7 +241,12 @@ impl<T> List<T> {
         }
     }
     pub fn total_listeners(&self) -> usize {
-        self.inner.try_lock().len()
+        self.inner
+        .try_lock()
+        .as_ref()
+        .map(|lock| &**lock)
+        .map(|listener_slab| listener_slab.listeners.len())
+        .unwrap_or(0)
     }
 }
 
