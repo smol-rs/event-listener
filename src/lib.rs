@@ -116,14 +116,14 @@ struct Inner<T> {
     /// The number of notified entries, or `usize::MAX` if all of them have been notified.
     ///
     /// If there are no entries, this value is set to `usize::MAX`.
-    pub notified: AtomicUsize,
+    notified: AtomicUsize,
 
     /// Inner queue of event listeners.
     ///
     /// On `std` platforms, this is an intrusive linked list. On `no_std` platforms, this is a
     /// more traditional `Vec` of listeners, with an atomic queue used as a backup for high
     /// contention.
-    pub list: sys::List<T>,
+    list: sys::List<T>,
 }
 
 impl<T> Inner<T> {
