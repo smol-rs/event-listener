@@ -44,7 +44,7 @@ impl<T> List<T> {
             notified: 0,
         }))
     }
-    // Accessor methods because fields are private, not sure how to go around it
+    // Accessor method because fields are private, not sure how to go around it
     pub fn total_listeners(&self) -> usize {
         self.0.lock().unwrap().len
     }
