@@ -672,7 +672,15 @@ unsafe impl<T: Send> Sync for EventListener<T> {}
 
 impl<T> fmt::Debug for EventListener<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("EventListener { .. }")
+        let mut ds = f.debug_struct("EventListener");
+
+        if self.is_listening() {
+            ds.field("Listening", &"Yes");
+        } else {
+            ds.field("Listening", &"No");
+        }
+
+        ds.finish()
     }
 }
 
