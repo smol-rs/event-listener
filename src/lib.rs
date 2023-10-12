@@ -116,14 +116,14 @@ struct Inner<T> {
     /// The number of notified entries, or `usize::MAX` if all of them have been notified.
     ///
     /// If there are no entries, this value is set to `usize::MAX`.
-    notified: AtomicUsize,
+    pub notified: AtomicUsize,
 
     /// Inner queue of event listeners.
     ///
     /// On `std` platforms, this is an intrusive linked list. On `no_std` platforms, this is a
     /// more traditional `Vec` of listeners, with an atomic queue used as a backup for high
     /// contention.
-    list: sys::List<T>,
+    pub list: sys::List<T>,
 }
 
 impl<T> Inner<T> {
@@ -161,7 +161,6 @@ pub struct Event<T = ()> {
     /// is an `Arc<Inner>` so it's important to keep in mind that it contributes to the [`Arc`]'s
     /// reference count.
     inner: AtomicPtr<Inner<T>>,
-    listener_count: AtomicUsize,
 }
 
 unsafe impl<T: Send> Send for Event<T> {}
@@ -172,19 +171,16 @@ impl<T> core::panic::RefUnwindSafe for Event<T> {}
 
 impl<T> fmt::Debug for Event<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut ds = f.debug_struct("Event");
+        let inner = self.inner();
+        let notified_count = unsafe { (*inner).notified.load(Ordering::Relaxed) };
+        let total_count = unsafe { (*inner).list.total_listeners() };
 
-        if let Some(inner) = self.try_inner() {
-            let notified_listeners = inner.notified.load(Ordering::Acquire);
-            let total_listeners = self.listener_count.load(Ordering::Relaxed);
-
-            ds.field("Notified Listeners", &notified_listeners);
-            ds.field("Total Listeners count", &total_listeners);
-        } else {
-            ds.field("Status", &"Not Initialized");
-        }
-
-        ds.finish()
+        write!(
+            f,
+            "Event {{\n  Number of notified listeners: {}\n  Total number of listeners: {}\n}}",
+            notified_count,
+            total_count
+        )
     }
 }
 
@@ -213,16 +209,7 @@ impl<T> Event<T> {
     pub const fn with_tag() -> Self {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
-            listener_count: AtomicUsize::new(0),
         }
-    }
-
-    pub fn add_listener(&self) {
-        self.listener_count.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn remove_listener(&self) {
-        self.listener_count.fetch_sub(1, Ordering::Relaxed);
     }
     /// Tell whether any listeners are currently notified.
     ///
@@ -475,7 +462,6 @@ impl Event<()> {
     pub const fn new() -> Self {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
-            listener_count: AtomicUsize::new(0),
         }
     }
     
