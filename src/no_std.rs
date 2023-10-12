@@ -1267,8 +1267,8 @@ mod tests {
             listeners.listeners[1],
             Entry::Empty(NonZeroUsize::new(4).unwrap())
         );
-        assert_eq!(listeners.listeners[2].prev, Cell::new(None));
-        assert_eq!(listeners.listeners[2].next, Cell::new(Some(key3)));
+        assert_eq!(listeners.listeners[2].prev(), Cell::new(None));
+        assert_eq!(listeners.listeners[2].next(), Cell::new(Some(key3)));
         assert_eq!(
             listeners.listeners[3],
             Entry::Listener {
