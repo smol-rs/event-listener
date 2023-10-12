@@ -170,37 +170,21 @@ unsafe impl<T: Send> Sync for Event<T> {}
 impl<T> core::panic::UnwindSafe for Event<T> {}
 impl<T> core::panic::RefUnwindSafe for Event<T> {}
 
-struct EventDebugInfo {
-    notified_listeners: usize,
-    total_listeners: usize,
-}
-
-impl fmt::Debug for EventDebugInfo {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Event {{ Notified Listeners: {}, Total Listeners: {} }}",
-            self.notified_listeners,
-            self.total_listeners
-        )
-    }
-}
-
 impl<T> fmt::Debug for Event<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut ds = f.debug_struct("Event");
+
         if let Some(inner) = self.try_inner() {
             let notified_listeners = inner.notified.load(Ordering::Acquire);
-            let total_listeners = self.listener_count.load(Ordering::Relaxed); // Access listener_count directly
+            let total_listeners = self.listener_count.load(Ordering::Relaxed);
 
-            let debug_info = EventDebugInfo {
-                notified_listeners,
-                total_listeners,
-            };
-
-            debug_info.fmt(f)
+            ds.field("Notified Listeners", &notified_listeners);
+            ds.field("Total Listeners count", &total_listeners);
         } else {
-            f.write_str("Event { Not Initialized }")
+            ds.field("Status", &"Not Initialized");
         }
+
+        ds.finish()
     }
 }
 
@@ -234,11 +218,11 @@ impl<T> Event<T> {
     }
 
     pub fn add_listener(&self) {
-        self.listener_count.fetch_add(1, Ordering::Relaxed); // incerment
+        self.listener_count.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn remove_listener(&self) {
-        self.listener_count.fetch_sub(1, Ordering::Relaxed); // decrement
+        self.listener_count.fetch_sub(1, Ordering::Relaxed);
     }
     /// Tell whether any listeners are currently notified.
     ///
