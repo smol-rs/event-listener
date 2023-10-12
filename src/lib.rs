@@ -178,7 +178,7 @@ impl<T> fmt::Debug for Event<T> {
         write!(
             f,
             "Event {{\n  Number of notified listeners: {}\n  Total number of listeners: {}\n}}",
-            notified_count,total_count
+            notified_count, total_count
         )
     }
 }
