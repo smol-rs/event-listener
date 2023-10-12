@@ -240,6 +240,9 @@ impl<T> List<T> {
             queue: concurrent_queue::ConcurrentQueue::unbounded(),
         }
     }
+    pub fn total_listeners(&self) -> usize {
+        self.inner.lock().len()
+    }
 }
 
 /// The guard returned by [`Inner::lock`].
