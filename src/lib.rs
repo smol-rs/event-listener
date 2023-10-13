@@ -171,16 +171,21 @@ impl<T> core::panic::RefUnwindSafe for Event<T> {}
 
 impl<T> fmt::Debug for Event<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let inner = self.inner();
-        let notified_count = unsafe { (*inner).notified.load(Ordering::Relaxed) };
-        let total_count = unsafe { (*inner).list.total_listeners() };
+       match self.try_inner() {
+        Some(inner) => {
+            let notified_count = inner.notified.load(Ordering::Relaxed);
+            let total_count = inner.list.total_listeners();
 
-        write!(
-            f,
-            "Event {{\n  Number of notified listeners: {:?}\n  Total number of listeners: {:?}\n}}",
-            notified_count, total_count
-        )
-    }
+            f.debug_struct("Event")
+                .field("listeners_notified", &notified_count)
+                .field("listeners_total", &total_count)
+                .finish()
+       }
+        None => {
+            f.debug_tuple("event").field(&"<uninitialized>").finish()
+        }
+    }        
+ }
 }
 
 impl Default for Event {
@@ -656,15 +661,9 @@ unsafe impl<T: Send> Sync for EventListener<T> {}
 
 impl<T> fmt::Debug for EventListener<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut ds = f.debug_struct("EventListener");
-
-        if self.is_listening() {
-            ds.field("Listening", &"Yes");
-        } else {
-            ds.field("Listening", &"No");
-        }
-
-        ds.finish()
+        f.debug_struct("EventListener")
+        .field("listening", &self.is_listening())
+        .finish()
     }
 }
 

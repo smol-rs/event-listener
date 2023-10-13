@@ -240,13 +240,11 @@ impl<T> List<T> {
             queue: concurrent_queue::ConcurrentQueue::unbounded(),
         }
     }
-    pub fn total_listeners(&self) -> usize {
+    pub fn total_listeners(&self) -> Result<usize, &str> {
         self.inner
             .try_lock()
-            .as_ref()
-            .map(|lock| &**lock)
-            .map(|listener_slab| listener_slab.listeners.len())
-            .unwrap_or(0)
+            .map(|lock| Ok(lock.listeners.len()))
+            .unwrap_or(Err("<locked>"))
     }
 }
 
