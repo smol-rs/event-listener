@@ -1,3 +1,7 @@
+# Version 3.0.1
+
+- Migrate to Rust 2021 (#85)
+
 # Version 3.0.0
 
 - Use the `parking` crate instead of threading APIs (#27)
