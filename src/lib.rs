@@ -237,6 +237,25 @@ impl<T> Event<T> {
     /// let event = Event::new();
     /// let listener = event.listen();
     /// ```
+    ///
+    /// # Caveats
+    ///
+    /// The above example is equivalent to this code:
+    ///
+    /// ```
+    /// use event_listener::{Event, EventListener};
+    ///
+    /// let event = Event::new();
+    /// let mut listener = Box::pin(EventListener::new(&event));
+    /// listener.as_mut().listen();
+    /// ```
+    ///
+    /// It creates a new listener, pins it to the heap, and inserts it into the linked list
+    /// of listeners. While this type of usage is simple, it may be desired to eliminate this
+    /// heap allocation. In this case, consider using the [`EventListener::new`] constructor
+    /// directly, which allows for greater control over where the [`EventListener`] is
+    /// allocated. However, users of this `new` method must be careful to ensure that the
+    /// [`EventListener`] is `listen`ing before waiting on it; panics may occur otherwise.
     #[cold]
     pub fn listen(&self) -> Pin<Box<EventListener<T>>> {
         let mut listener = Box::pin(EventListener::new(self));
@@ -638,6 +657,77 @@ pin_project_lite::pin_project! {
     /// If a notified listener is dropped without receiving a notification, dropping will notify
     /// another active listener. Whether one *additional* listener will be notified depends on what
     /// kind of notification was delivered.
+    ///
+    /// The listener is not registered into the linked list inside of the [`Event`] by default. It
+    /// needs to be pinned first before being inserted using the `listen()` method. After the
+    /// listener has begun `listen`ing, the user can `await` it like a future or call `wait()`
+    /// to block the current thread until it is notified.
+    ///
+    /// ## Examples
+    ///
+    /// ```
+    /// use event_listener::{Event, EventListener};
+    /// use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+    /// use std::thread;
+    /// use std::time::Duration;
+    ///
+    /// // Some flag to wait on.
+    /// let flag = Arc::new(AtomicBool::new(false));
+    ///
+    /// // Create an event to wait on.
+    /// let event = Event::new();
+    ///
+    /// thread::spawn({
+    ///     let flag = flag.clone();
+    ///     move || {
+    ///         thread::sleep(Duration::from_secs(2));
+    ///         flag.store(true, Ordering::SeqCst);
+    ///
+    ///         // Wake up the listener.
+    ///         event.notify_additional(std::usize::MAX);
+    ///     }
+    /// });
+    ///
+    /// let listener = EventListener::new(&event);
+    ///
+    /// // Make sure that the event listener is pinned before doing anything else.
+    /// //
+    /// // We pin the listener to the stack here, as it lets us avoid a heap allocation.
+    /// futures_lite::pin!(listener);
+    ///
+    /// // Wait for the flag to become ready.
+    /// loop {
+    ///     if flag.load(Ordering::Acquire) {
+    ///         // We are done.
+    ///         break;
+    ///     }
+    ///
+    ///     if listener.is_listening() {
+    ///         // We are inserted into the linked list and we can now wait.
+    ///         listener.as_mut().wait();
+    ///     } else {
+    ///         // We need to insert ourselves into the list. Since this insertion is an atomic
+    ///         // operation, we should check the flag again before waiting.
+    ///         listener.as_mut().listen();
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// The above example is equivalent to the one provided in the crate level example. However,
+    /// it has some advantages. By directly creating the listener with `EventListener::new()`,
+    /// we have control over how the listener is handled in memory. We take advantage of this by
+    /// pinning the `listener` variable to the stack using the [`futures_lite::pin`] macro. In
+    /// contrast, `Event::listen` binds the listener to the heap.
+    ///
+    /// However, this additional power comes with additional responsibility. By default, the
+    /// event listener is created in an "uninserted" state. This property means that any
+    /// notifications delivered to the [`Event`] by default will not wake up this listener.
+    /// Before any notifications can be received, the `listen()` method must be called on
+    /// `EventListener` to insert it into the list of listeners. After a `.await` or a `wait()`
+    /// call has completed, `listen()` must be called again if the user is still interested in
+    /// any events.
+    ///
+    /// [`futures_lite::pin`]: https://docs.rs/futures-lite/latest/futures_lite/macro.pin.html
     #[project(!Unpin)] // implied by Listener, but can generate better docs
     pub struct EventListener<T = ()> {
         #[pin]
@@ -656,6 +746,23 @@ impl<T> fmt::Debug for EventListener<T> {
 
 impl<T> EventListener<T> {
     /// Create a new `EventListener` that will wait for a notification from the given [`Event`].
+    ///
+    /// This function does not register the `EventListener` into the linked list of listeners
+    /// contained within the [`Event`]. Make sure to call `listen` before `await`ing on
+    /// this future or calling `wait()`.
+    ///
+    /// ## Examples
+    ///
+    /// ```
+    /// use event_listener::{Event, EventListener};
+    ///
+    /// let event = Event::new();
+    /// let listener = EventListener::new(&event);
+    ///
+    /// // Make sure that the listener is pinned and listening before doing anything else.
+    /// let mut listener = Box::pin(listener);
+    /// listener.as_mut().listen();
+    /// ```
     pub fn new(event: &Event<T>) -> Self {
         let inner = event.inner();
 
