@@ -658,10 +658,10 @@ pin_project_lite::pin_project! {
     /// another active listener. Whether one *additional* listener will be notified depends on what
     /// kind of notification was delivered.
     ///
-    /// The listener is not registered into the linked list inside of the [`Event`] by default. It
-    /// needs to be pinned first before being inserted using the `listen()` method. After the
-    /// listener has begun `listen`ing, the user can `await` it like a future or call `wait()`
-    /// to block the current thread until it is notified.
+    /// The listener is not registered into the linked list inside of the [`Event`] by default if
+    /// it is created via the `new()` method. It needs to be pinned first before being inserted
+    /// using the `listen()` method. After the listener has begun `listen`ing, the user can
+    /// `await` it like a future or call `wait()` to block the current thread until it is notified.
     ///
     /// ## Examples
     ///
@@ -675,10 +675,11 @@ pin_project_lite::pin_project! {
     /// let flag = Arc::new(AtomicBool::new(false));
     ///
     /// // Create an event to wait on.
-    /// let event = Event::new();
+    /// let event = Arc::new(Event::new());
     ///
     /// thread::spawn({
     ///     let flag = flag.clone();
+    ///     let event = event.clone();
     ///     move || {
     ///         thread::sleep(Duration::from_secs(2));
     ///         flag.store(true, Ordering::SeqCst);
