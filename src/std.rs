@@ -51,7 +51,7 @@ impl<T> List<T> {
                 let len = mutex.len;
                 Ok(len)
             }
-            Err(_) => Err("<locked>")
+            Err(_) => Err("<locked>"),
         }
     }
 }
