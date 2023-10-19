@@ -215,8 +215,8 @@ impl<T> Event<T> {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
         }
-    }  
-     
+    }
+
     /// Tell whether any listeners are currently notified.
     ///
     /// # Examples
