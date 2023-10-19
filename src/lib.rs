@@ -181,7 +181,7 @@ impl<T> fmt::Debug for Event<T> {
                     .field("listeners_total", &total_count)
                     .finish()
             }
-            None => f.debug_tuple("event").field(&"<uninitialized>").finish(),
+            None => f.debug_tuple("event").field(&format_args!("<uninitialized>")).finish(),
         }
     }
 }
