@@ -470,6 +470,7 @@ impl Event<()> {
             inner: AtomicPtr::new(ptr::null_mut()),
         }
     }
+
     /// Notifies a number of active listeners without emitting a `SeqCst` fence.
     ///
     /// The number is allowed to be zero or exceed the current number of listeners.
