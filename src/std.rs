@@ -46,7 +46,13 @@ impl<T> List<T> {
     }
     // Accessor method because fields are private, not sure how to go around it
     pub fn total_listeners(&self) -> Result<usize, &str> {
-        self.0.lock().map(|mutex| mutex.len).map_err(|_| "<locked>")
+        match self.0.try_lock() {
+            Ok(mutex) => {
+                let len = mutex.len;
+                Ok(len)
+            }
+            Err(_) => Err("<locked>")
+        }
     }
 }
 
