@@ -181,7 +181,10 @@ impl<T> fmt::Debug for Event<T> {
                     .field("listeners_total", &total_count)
                     .finish()
             }
-            None => f.debug_tuple("event").field(&format_args!("<uninitialized>")).finish(),
+            None => f
+                .debug_tuple("event")
+                .field(&format_args!("<uninitialized>"))
+                .finish(),
         }
     }
 }
@@ -212,8 +215,8 @@ impl<T> Event<T> {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
         }
-    }
-    
+    }  
+     
     /// Tell whether any listeners are currently notified.
     ///
     /// # Examples
