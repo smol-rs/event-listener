@@ -9,6 +9,8 @@ pub(crate) use __private::Internal;
 /// The type of notification to use with an [`Event`].
 ///
 /// This is hidden and sealed to prevent changes to this trait from being breaking.
+///
+/// [`Event`]: crate::Event
 #[doc(hidden)]
 pub trait NotificationPrivate {
     /// The tag data associated with a notification.
@@ -52,6 +54,8 @@ pub trait NotificationPrivate {
 ///
 /// notify(&Event::new(), 1.additional());
 /// ```
+///
+/// [`Event`]: crate::Event
 pub trait Notification: NotificationPrivate {}
 impl<N: NotificationPrivate + ?Sized> Notification for N {}
 
