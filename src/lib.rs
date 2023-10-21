@@ -185,7 +185,7 @@ impl<T> fmt::Debug for Event<T> {
                     .finish()
             }
             None => f
-                .debug_tuple("event")
+                .debug_tuple("Event")
                 .field(&format_args!("<uninitialized>"))
                 .finish(),
         }
