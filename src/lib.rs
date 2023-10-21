@@ -176,7 +176,12 @@ impl<T> fmt::Debug for Event<T> {
                 let notified_count = inner.notified.load(Ordering::Relaxed);
                 let total_count = match inner.list.total_listeners() {
                     Ok(total_count) => total_count,
-                    Err(_) => return f.debug_tuple("Event").field(&format_args!("<locked>")).finish(),
+                    Err(_) => {
+                        return f
+                            .debug_tuple("Event")
+                            .field(&format_args!("<locked>"))
+                            .finish()
+                    }
                 };
 
                 f.debug_struct("Event")
