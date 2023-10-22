@@ -44,6 +44,16 @@ impl<T> List<T> {
             notified: 0,
         }))
     }
+    // Accessor method because fields are private, not sure how to go around it
+    pub fn total_listeners(&self) -> Result<usize, &str> {
+        match self.0.try_lock() {
+            Ok(mutex) => {
+                let len = mutex.len;
+                Ok(len)
+            }
+            Err(_) => Err("<locked>"),
+        }
+    }
 }
 
 impl<T> crate::Inner<T> {
