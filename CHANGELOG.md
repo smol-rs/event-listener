@@ -1,3 +1,8 @@
+# Version 3.0.1
+
+- Emphasize that `listen()` must be called on `EventListener` in documentation. (#90)
+- Write useful output in `fmt::Debug` implementations. (#86)
+
 # Version 3.0.0
 
 - Use the `parking` crate instead of threading APIs (#27)
