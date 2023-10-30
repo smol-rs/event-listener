@@ -15,5 +15,5 @@ categories = ["asynchronous", "concurrency"]
 exclude = ["/.*"]
 
 [dev-dependencies]
-futures = { version = "0.3", default-features = false, features = ["std"] }
+futures-lite = "2.0.0"
 waker-fn = "1"
