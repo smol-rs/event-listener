@@ -764,6 +764,12 @@ unsafe impl<T: Send> Sync for EventListener<T> {}
 impl<T> core::panic::UnwindSafe for EventListener<T> {}
 impl<T> core::panic::RefUnwindSafe for EventListener<T> {}
 
+impl<T> Default for EventListener<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> fmt::Debug for EventListener<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EventListener")
