@@ -70,16 +70,11 @@ impl<T> crate::Inner<T> {
     }
 
     /// Add a new listener to the list.
-    ///
-    /// Does nothing is the listener is already registered.
     pub(crate) fn insert(&self, mut listener: Pin<&mut Option<Listener<T>>>) {
         let mut inner = self.lock();
 
         // SAFETY: We are locked, so we can access the inner `link`.
         let entry = unsafe {
-            if listener.is_some() {
-                return;
-            }
             listener.as_mut().set(Some(Listener {
                 link: UnsafeCell::new(Link {
                     state: Cell::new(State::Created),

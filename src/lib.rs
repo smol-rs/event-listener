@@ -268,8 +268,8 @@ impl<T> Event<T> {
     /// use event_listener::{Event, EventListener};
     ///
     /// let event = Event::new();
-    /// let mut listener = Box::pin(EventListener::new(&event));
-    /// listener.as_mut().listen();
+    /// let mut listener = Box::pin(EventListener::new());
+    /// listener.as_mut().listen(&event);
     /// ```
     ///
     /// It creates a new listener, pins it to the heap, and inserts it into the linked list
@@ -280,8 +280,8 @@ impl<T> Event<T> {
     /// [`EventListener`] is `listen`ing before waiting on it; panics may occur otherwise.
     #[cold]
     pub fn listen(&self) -> Pin<Box<EventListener<T>>> {
-        let mut listener = Box::pin(EventListener::new(self));
-        listener.as_mut().listen();
+        let mut listener = Box::pin(EventListener::new());
+        listener.as_mut().listen(self);
         listener
     }
 
@@ -711,7 +711,7 @@ pin_project_lite::pin_project! {
     ///     }
     /// });
     ///
-    /// let listener = EventListener::new(&event);
+    /// let listener = EventListener::new();
     ///
     /// // Make sure that the event listener is pinned before doing anything else.
     /// //
@@ -731,7 +731,7 @@ pin_project_lite::pin_project! {
     ///     } else {
     ///         // We need to insert ourselves into the list. Since this insertion is an atomic
     ///         // operation, we should check the flag again before waiting.
-    ///         listener.as_mut().listen();
+    ///         listener.as_mut().listen(&event);
     ///     }
     /// }
     /// ```
@@ -754,7 +754,7 @@ pin_project_lite::pin_project! {
     #[project(!Unpin)] // implied by Listener, but can generate better docs
     pub struct EventListener<T = ()> {
         #[pin]
-        listener: Listener<T, Arc<Inner<T>>>,
+        listener: Option<Listener<T, Arc<Inner<T>>>>,
     }
 }
 
@@ -785,29 +785,32 @@ impl<T> EventListener<T> {
     /// use event_listener::{Event, EventListener};
     ///
     /// let event = Event::new();
-    /// let listener = EventListener::new(&event);
+    /// let listener = EventListener::new();
     ///
     /// // Make sure that the listener is pinned and listening before doing anything else.
     /// let mut listener = Box::pin(listener);
-    /// listener.as_mut().listen();
+    /// listener.as_mut().listen(&event);
     /// ```
-    pub fn new(event: &Event<T>) -> Self {
-        let inner = event.inner();
-
-        let listener = Listener {
-            event: unsafe { Arc::clone(&ManuallyDrop::new(Arc::from_raw(inner))) },
-            listener: None,
-        };
-
-        Self { listener }
+    pub fn new() -> Self {
+        Self { listener: None }
     }
 
     /// Register this listener into the given [`Event`].
     ///
     /// This method can only be called after the listener has been pinned, and must be called before
     /// the listener is polled.
-    pub fn listen(self: Pin<&mut Self>) {
-        self.listener().insert();
+    pub fn listen(mut self: Pin<&mut Self>, event: &Event<T>) {
+        let inner = {
+            let inner = event.inner();
+            unsafe { Arc::clone(&ManuallyDrop::new(Arc::from_raw(inner))) }
+        };
+
+        let mut listener = self.as_mut().project().listener;
+        listener.set(Some(Listener {
+            event: inner.clone(),
+            listener: None,
+        }));
+        inner.insert(self.listener().project().listener);
 
         // Make sure the listener is registered before whatever happens next.
         notify::full_fence();
@@ -821,13 +824,13 @@ impl<T> EventListener<T> {
     /// use event_listener::{Event, EventListener};
     ///
     /// let event = Event::new();
-    /// let mut listener = Box::pin(EventListener::new(&event));
+    /// let mut listener = Box::pin(EventListener::new());
     ///
     /// // The listener starts off not listening.
     /// assert!(!listener.is_listening());
     ///
     /// // After listen() is called, the listener is listening.
-    /// listener.as_mut().listen();
+    /// listener.as_mut().listen(&event);
     /// assert!(listener.is_listening());
     ///
     /// // Once the future is notified, the listener is no longer listening.
@@ -836,7 +839,10 @@ impl<T> EventListener<T> {
     /// assert!(!listener.is_listening());
     /// ```
     pub fn is_listening(&self) -> bool {
-        self.listener.listener.is_some()
+        self.listener
+            .as_ref()
+            .and_then(|listener| listener.listener.as_ref())
+            .is_some()
     }
 
     /// Blocks until a notification is received.
@@ -922,7 +928,11 @@ impl<T> EventListener<T> {
     /// assert!(!listener2.as_mut().discard());
     /// ```
     pub fn discard(self: Pin<&mut Self>) -> bool {
-        self.listener().discard()
+        if let Some(listener) = self.project().listener.as_pin_mut() {
+            return listener.discard();
+        }
+
+        false
     }
 
     /// Returns `true` if this listener listens to the given `Event`.
@@ -939,7 +949,11 @@ impl<T> EventListener<T> {
     /// ```
     #[inline]
     pub fn listens_to(&self, event: &Event<T>) -> bool {
-        ptr::eq::<Inner<T>>(&**self.inner(), event.inner.load(Ordering::Acquire))
+        if let Some(inner) = self.inner() {
+            return ptr::eq::<Inner<T>>(&**inner, event.inner.load(Ordering::Acquire));
+        }
+
+        false
     }
 
     /// Returns `true` if both listeners listen to the same `Event`.
@@ -956,15 +970,22 @@ impl<T> EventListener<T> {
     /// assert!(listener1.same_event(&listener2));
     /// ```
     pub fn same_event(&self, other: &EventListener<T>) -> bool {
-        ptr::eq::<Inner<T>>(&**self.inner(), &**other.inner())
+        if let (Some(inner1), Some(inner2)) = (self.inner(), other.inner()) {
+            return ptr::eq::<Inner<T>>(&**inner1, &**inner2);
+        }
+
+        false
     }
 
     fn listener(self: Pin<&mut Self>) -> Pin<&mut Listener<T, Arc<Inner<T>>>> {
-        self.project().listener
+        self.project()
+            .listener
+            .as_pin_mut()
+            .expect("listener was never registed into the Event, call EventListener::listen()")
     }
 
-    fn inner(&self) -> &Arc<Inner<T>> {
-        &self.listener.event
+    fn inner(&self) -> Option<&Arc<Inner<T>>> {
+        self.listener.as_ref().map(|listener| &listener.event)
     }
 }
 
@@ -986,6 +1007,9 @@ pin_project_lite::pin_project! {
         event: B,
 
         // The inner state of the listener.
+        //
+        // This is only ever `None` during initialization. After `listen()` has completed, this
+        // should be `Some`.
         #[pin]
         listener: Option<sys::Listener<T>>,
     }
@@ -998,7 +1022,6 @@ pin_project_lite::pin_project! {
             // If we're being dropped, we need to remove ourself from the list.
             let this = this.project();
             let inner = (*this.event).borrow();
-
             inner.remove(this.listener, true);
         }
     }
@@ -1008,14 +1031,6 @@ unsafe impl<T: Send, B: Borrow<Inner<T>> + Unpin + Send> Send for Listener<T, B>
 unsafe impl<T: Send, B: Borrow<Inner<T>> + Unpin + Sync> Sync for Listener<T, B> {}
 
 impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
-    /// Register this listener with the event.
-    fn insert(self: Pin<&mut Self>) {
-        let this = self.project();
-        let inner = (*this.event).borrow();
-
-        inner.insert(this.listener);
-    }
-
     /// Wait until the provided deadline.
     #[cfg(all(feature = "std", not(target_family = "wasm")))]
     fn wait_internal(mut self: Pin<&mut Self>, deadline: Option<Instant>) -> Option<T> {
