@@ -9,7 +9,7 @@ const COUNT: usize = 8000;
 fn bench_events(c: &mut Criterion) {
     c.bench_function("notify_and_wait", |b| {
         let ev = Event::new();
-        let mut handles = iter::repeat_with(|| EventListener::new())
+        let mut handles = iter::repeat_with(EventListener::new)
             .take(COUNT)
             .collect::<Vec<_>>();
 
