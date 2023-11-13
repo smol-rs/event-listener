@@ -1,3 +1,7 @@
+# Version 3.1.0
+
+- Implement `UnwindSafe` and `RefUnwindSafe` for `EventListener`. This was unintentionally removed in version 3 (#96).
+
 # Version 3.0.1
 
 - Emphasize that `listen()` must be called on `EventListener` in documentation. (#90)
