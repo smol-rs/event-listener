@@ -1,3 +1,10 @@
+# Version 4.0.0
+
+- **Breaking:** Fix a footgun in the `EventListener` type. `EventListener::new()`
+  now no longer takes an `&Event` as an argument, and `EventListener::listen()`
+  takes the  `&Event` as an argument. Hopefully this should prevent `.await`ing
+  on a listener without making sure it's listening first. (#94)
+
 # Version 3.1.0
 
 - Implement `UnwindSafe` and `RefUnwindSafe` for `EventListener`. This was unintentionally removed in version 3 (#96).
