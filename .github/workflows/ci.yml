@@ -105,6 +105,7 @@ jobs:
           echo "RUSTFLAGS=${RUSTFLAGS} -Z randomize-layout" >>"${GITHUB_ENV}"
       - run: cargo miri test --all
       - run: cargo miri test --no-default-features --tests
+      - run: cargo miri test --no-default-features --features portable-atomic --tests
 
   security_audit:
     permissions:
