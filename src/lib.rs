@@ -810,13 +810,24 @@ impl<T> EventListener<T> {
     ///
     /// This method can only be called after the listener has been pinned, and must be called before
     /// the listener is polled.
+    ///
+    /// Notifications that exist when this function is called will be discarded.
     pub fn listen(mut self: Pin<&mut Self>, event: &Event<T>) {
         let inner = {
             let inner = event.inner();
             unsafe { Arc::clone(&ManuallyDrop::new(Arc::from_raw(inner))) }
         };
 
-        let ListenerProject { event, listener } = self.as_mut().project().listener.project();
+        let ListenerProject {
+            event,
+            mut listener,
+        } = self.as_mut().project().listener.project();
+
+        // If an event is already registered, make sure to remove it.
+        if let Some(current_event) = event.as_ref() {
+            current_event.remove(listener.as_mut(), false);
+        }
+
         let inner = event.insert(inner);
         inner.insert(listener);
 
