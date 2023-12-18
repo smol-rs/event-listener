@@ -189,3 +189,16 @@ fn notify_all_fair() {
         .poll(&mut Context::from_waker(&waker3))
         .is_ready());
 }
+
+#[test]
+fn more_than_one_event() {
+    let event = Event::new();
+    let event2 = Event::new();
+
+    let mut listener = Box::pin(EventListener::<()>::new());
+    listener.as_mut().listen(&event);
+    listener.as_mut().listen(&event2);
+
+    drop(listener);
+    event.notify(1);
+}
