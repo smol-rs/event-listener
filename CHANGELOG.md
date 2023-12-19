@@ -1,3 +1,8 @@
+# Version 4.0.1
+
+- Fix a use-after-move error after an `EventListener` is assigned to listen to
+  another `Event`. (#101)
+
 # Version 4.0.0
 
 - **Breaking:** Fix a footgun in the `EventListener` type. `EventListener::new()`
