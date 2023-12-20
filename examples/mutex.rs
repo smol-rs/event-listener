@@ -13,7 +13,7 @@ mod example {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use event_listener::{Event, Listener};
+    use event_listener::{listener, Event, Listener};
 
     /// A simple mutex.
     struct Mutex<T> {
@@ -51,32 +51,28 @@ mod example {
 
         /// Blocks until a lock is acquired.
         fn lock(&self) -> MutexGuard<'_, T> {
-            let mut listener = None;
-
             loop {
                 // Attempt grabbing a lock.
                 if let Some(guard) = self.try_lock() {
                     return guard;
                 }
 
-                // Set up an event listener or wait for a notification.
-                match listener.take() {
-                    None => {
-                        // Start listening and then try locking again.
-                        listener = Some(self.lock_ops.listen());
-                    }
-                    Some(l) => {
-                        // Wait until a notification is received.
-                        l.wait();
-                    }
+                // Set up an event listener.
+                listener!(self.lock_ops => listener);
+
+                // Try again.
+                if let Some(guard) = self.try_lock() {
+                    return guard;
                 }
+
+                // Wait for a notification.
+                listener.wait();
             }
         }
 
         /// Blocks until a lock is acquired or the timeout is reached.
         fn lock_timeout(&self, timeout: Duration) -> Option<MutexGuard<'_, T>> {
             let deadline = Instant::now() + timeout;
-            let mut listener = None;
 
             loop {
                 // Attempt grabbing a lock.
@@ -84,41 +80,37 @@ mod example {
                     return Some(guard);
                 }
 
-                // Set up an event listener or wait for an event.
-                match listener.take() {
-                    None => {
-                        // Start listening and then try locking again.
-                        listener = Some(self.lock_ops.listen());
-                    }
-                    Some(l) => {
-                        // Wait until a notification is received.
-                        l.wait_deadline(deadline)?;
-                    }
+                // Set up an event listener.
+                listener!(self.lock_ops => listener);
+
+                // Try again.
+                if let Some(guard) = self.try_lock() {
+                    return Some(guard);
                 }
+
+                // Wait until a notification is received.
+                listener.wait_deadline(deadline)?;
             }
         }
 
         /// Acquires a lock asynchronously.
         async fn lock_async(&self) -> MutexGuard<'_, T> {
-            let mut listener = None;
-
             loop {
                 // Attempt grabbing a lock.
                 if let Some(guard) = self.try_lock() {
                     return guard;
                 }
 
-                // Set up an event listener or wait for an event.
-                match listener.take() {
-                    None => {
-                        // Start listening and then try locking again.
-                        listener = Some(self.lock_ops.listen());
-                    }
-                    Some(l) => {
-                        // Wait until a notification is received.
-                        l.await;
-                    }
+                // Set up an event listener.
+                listener!(self.lock_ops => listener);
+
+                // Try again.
+                if let Some(guard) = self.try_lock() {
+                    return guard;
                 }
+
+                // Wait until a notification is received.
+                listener.await;
             }
         }
     }
