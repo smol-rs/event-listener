@@ -6,25 +6,21 @@
 mod example {
     #![allow(dead_code)]
 
-    use std::cell::UnsafeCell;
     use std::ops::{Deref, DerefMut};
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc};
     use std::thread;
     use std::time::{Duration, Instant};
 
     use event_listener::{listener, Event, Listener};
+    use try_lock::{Locked, TryLock};
 
     /// A simple mutex.
     struct Mutex<T> {
-        /// Set to `true` when the mutex is locked.
-        locked: AtomicBool,
-
         /// Blocked lock operations.
         lock_ops: Event,
 
-        /// The inner protected data.
-        data: UnsafeCell<T>,
+        /// The inner non-blocking mutex.
+        data: TryLock<T>,
     }
 
     unsafe impl<T: Send> Send for Mutex<T> {}
@@ -34,19 +30,14 @@ mod example {
         /// Creates a mutex.
         fn new(t: T) -> Mutex<T> {
             Mutex {
-                locked: AtomicBool::new(false),
                 lock_ops: Event::new(),
-                data: UnsafeCell::new(t),
+                data: TryLock::new(t),
             }
         }
 
         /// Attempts to acquire a lock.
         fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-            if !self.locked.swap(true, Ordering::Acquire) {
-                Some(MutexGuard(self))
-            } else {
-                None
-            }
+            self.data.try_lock().map(MutexGuard)
         }
 
         /// Blocks until a lock is acquired.
@@ -116,29 +107,19 @@ mod example {
     }
 
     /// A guard holding a lock.
-    struct MutexGuard<'a, T>(&'a Mutex<T>);
-
-    unsafe impl<T: Send> Send for MutexGuard<'_, T> {}
-    unsafe impl<T: Sync> Sync for MutexGuard<'_, T> {}
-
-    impl<T> Drop for MutexGuard<'_, T> {
-        fn drop(&mut self) {
-            self.0.locked.store(false, Ordering::Release);
-            self.0.lock_ops.notify(1);
-        }
-    }
+    struct MutexGuard<'a, T>(Locked<'a, T>);
 
     impl<T> Deref for MutexGuard<'_, T> {
         type Target = T;
 
         fn deref(&self) -> &T {
-            unsafe { &*self.0.data.get() }
+            &self.0
         }
     }
 
     impl<T> DerefMut for MutexGuard<'_, T> {
         fn deref_mut(&mut self) -> &mut T {
-            unsafe { &mut *self.0.data.get() }
+            &mut self.0
         }
     }
 
