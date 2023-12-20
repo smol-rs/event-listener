@@ -494,8 +494,8 @@ pub trait IntoNotification: __private::Sealed {
     /// event.notify(1.additional().tag(true));
     /// event.notify(1.additional().tag(false));
     ///
-    /// assert_eq!(listener1.as_mut().wait(), true);
-    /// assert_eq!(listener2.as_mut().wait(), false);
+    /// assert_eq!(listener1.wait(), true);
+    /// assert_eq!(listener2.wait(), false);
     /// ```
     #[cfg(feature = "std")]
     fn tag<T: Clone>(self, tag: T) -> Tag<Self::Notify, T>
@@ -528,8 +528,8 @@ pub trait IntoNotification: __private::Sealed {
     /// event.notify(1.additional().tag_with(|| true));
     /// event.notify(1.additional().tag_with(|| false));
     ///
-    /// assert_eq!(listener1.as_mut().wait(), true);
-    /// assert_eq!(listener2.as_mut().wait(), false);
+    /// assert_eq!(listener1.wait(), true);
+    /// assert_eq!(listener2.wait(), false);
     /// ```
     #[cfg(feature = "std")]
     fn tag_with<T, F>(self, tag: F) -> TagWith<Self::Notify, F>

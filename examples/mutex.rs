@@ -65,9 +65,9 @@ mod example {
                         // Start listening and then try locking again.
                         listener = Some(self.lock_ops.listen());
                     }
-                    Some(mut l) => {
+                    Some(l) => {
                         // Wait until a notification is received.
-                        l.as_mut().wait();
+                        l.wait();
                     }
                 }
             }
@@ -90,9 +90,9 @@ mod example {
                         // Start listening and then try locking again.
                         listener = Some(self.lock_ops.listen());
                     }
-                    Some(mut l) => {
+                    Some(l) => {
                         // Wait until a notification is received.
-                        l.as_mut().wait_deadline(deadline)?;
+                        l.wait_deadline(deadline)?;
                     }
                 }
             }
