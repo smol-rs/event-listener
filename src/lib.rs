@@ -833,6 +833,7 @@ pub trait Listener<T>: Future<Output = T> + __sealed::Sealed {
     fn same_event(&self, other: &Self) -> bool;
 }
 
+/// Implement the `Listener` trait using the underlying `InnerListener`.
 macro_rules! forward_impl_to_listener {
     ($gen:ident => $ty:ty) => {
         impl<$gen> crate::Listener<$gen> for $ty {
@@ -867,6 +868,15 @@ macro_rules! forward_impl_to_listener {
             #[inline]
             fn same_event(&self, other: &$ty) -> bool {
                 core::ptr::eq::<Inner<$gen>>(&*self.listener().event, &*other.listener().event)
+            }
+        }
+
+        impl<$gen> Future for $ty {
+            type Output = $gen;
+
+            #[inline]
+            fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<$gen> {
+                self.listener_mut().poll_internal(cx)
             }
         }
     };
@@ -921,14 +931,6 @@ impl<T> EventListener<T> {
 }
 
 forward_impl_to_listener! { T => EventListener<T> }
-
-impl<T> Future for EventListener<T> {
-    type Output = T;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.listener.as_mut().poll_internal(cx)
-    }
-}
 
 /// Create a stack-based event listener for an [`Event`].
 #[macro_export]
@@ -1376,13 +1378,4 @@ pub mod __private {
     }
 
     forward_impl_to_listener! { T => StackListener<'_, '_, T> }
-
-    impl<T> Future for StackListener<'_, '_, T> {
-        type Output = T;
-
-        #[inline]
-        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-            self.listener_mut().poll_internal(cx)
-        }
-    }
 }
