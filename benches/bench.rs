@@ -1,7 +1,7 @@
 use std::iter;
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use event_listener::{prelude::*, Event};
+use event_listener::{Event, Listener};
 
 const COUNT: usize = 8000;
 
