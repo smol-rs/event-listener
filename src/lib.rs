@@ -19,7 +19,7 @@
 //! use std::thread;
 //! use std::time::Duration;
 //! use std::usize;
-//! use event_listener::{Event, prelude::*};
+//! use event_listener::{Event, Listener};
 //!
 //! let flag = Arc::new(AtomicBool::new(false));
 //! let event = Arc::new(Event::new());
@@ -105,11 +105,6 @@ use sync::{Arc, WithMut};
 
 use notify::{Internal, NotificationPrivate};
 pub use notify::{IntoNotification, Notification};
-
-/// Useful traits for notifications.
-pub mod prelude {
-    pub use crate::{IntoNotification, Listener, Notification};
-}
 
 /// Inner state of [`Event`].
 struct Inner<T> {
@@ -213,7 +208,7 @@ impl<T> Event<T> {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::Event;
     ///
     /// let event = Event::<usize>::with_tag();
     /// ```
@@ -230,7 +225,7 @@ impl<T> Event<T> {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::{Event, Listener};
     ///
     /// let event = Event::new();
     /// let listener = event.listen();
@@ -254,7 +249,7 @@ impl<T> Event<T> {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::Event;
     ///
     /// let event = Event::new();
     /// let listener = event.listen();
@@ -322,7 +317,7 @@ impl<T> Event<T> {
     /// Use the default notification strategy:
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::Event;
     ///
     /// let event = Event::new();
     ///
@@ -346,7 +341,7 @@ impl<T> Event<T> {
     /// [`relaxed`]: IntoNotification::relaxed
     ///
     /// ```
-    /// use event_listener::{prelude::*, Event};
+    /// use event_listener::{IntoNotification, Event};
     /// use std::sync::atomic::{self, Ordering};
     ///
     /// let event = Event::new();
@@ -375,7 +370,7 @@ impl<T> Event<T> {
     /// [`additional`]: IntoNotification::additional
     ///
     /// ```
-    /// use event_listener::{prelude::*, Event};
+    /// use event_listener::{IntoNotification, Event};
     ///
     /// let event = Event::new();
     ///
@@ -398,7 +393,7 @@ impl<T> Event<T> {
     /// equivalent to calling [`Event::notify_additional_relaxed()`].
     ///
     /// ```
-    /// use event_listener::{prelude::*, Event};
+    /// use event_listener::{IntoNotification, Event};
     /// use std::sync::atomic::{self, Ordering};
     ///
     /// let event = Event::new();
@@ -539,7 +534,7 @@ impl Event<()> {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::Event;
     ///
     /// let event = Event::new();
     /// ```
@@ -563,7 +558,7 @@ impl Event<()> {
     /// use [`Event::notify()`] like so:
     ///
     /// ```
-    /// use event_listener::{prelude::*, Event};
+    /// use event_listener::{IntoNotification, Event};
     /// let event = Event::new();
     ///
     /// // Old way:
@@ -576,7 +571,7 @@ impl Event<()> {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::{Event, IntoNotification};
     /// use std::sync::atomic::{self, Ordering};
     ///
     /// let event = Event::new();
@@ -615,7 +610,7 @@ impl Event<()> {
     /// use [`Event::notify()`] like so:
     ///
     /// ```
-    /// use event_listener::{prelude::*, Event};
+    /// use event_listener::{IntoNotification, Event};
     /// let event = Event::new();
     ///
     /// // Old way:
@@ -628,7 +623,7 @@ impl Event<()> {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::Event;
     ///
     /// let event = Event::new();
     ///
@@ -665,7 +660,7 @@ impl Event<()> {
     /// use [`Event::notify()`] like so:
     ///
     /// ```
-    /// use event_listener::{prelude::*, Event};
+    /// use event_listener::{IntoNotification, Event};
     /// let event = Event::new();
     ///
     /// // Old way:
@@ -678,7 +673,7 @@ impl Event<()> {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::Event;
     /// use std::sync::atomic::{self, Ordering};
     ///
     /// let event = Event::new();
@@ -724,13 +719,13 @@ impl<T> Drop for Event<T> {
 ///
 /// This trait represents a type waiting for a notification from an [`Event`]. See the
 /// [`EventListener`] type for more documentation on this trait's usage.
-pub trait Listener<T>: Future<Output = T> + __sealed::Sealed {
+pub trait Listener<T = ()>: Future<Output = T> + __sealed::Sealed {
     /// Blocks until a notification is received.
     ///
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::{Event, Listener};
     ///
     /// let event = Event::new();
     /// let mut listener = event.listen();
@@ -752,7 +747,7 @@ pub trait Listener<T>: Future<Output = T> + __sealed::Sealed {
     ///
     /// ```
     /// use std::time::Duration;
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::{Event, Listener};
     ///
     /// let event = Event::new();
     /// let mut listener = event.listen();
@@ -771,7 +766,7 @@ pub trait Listener<T>: Future<Output = T> + __sealed::Sealed {
     ///
     /// ```
     /// use std::time::{Duration, Instant};
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::{Event, Listener};
     ///
     /// let event = Event::new();
     /// let mut listener = event.listen();
@@ -790,7 +785,7 @@ pub trait Listener<T>: Future<Output = T> + __sealed::Sealed {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::{Event, Listener};
     ///
     /// let event = Event::new();
     /// let mut listener1 = event.listen();
@@ -808,7 +803,7 @@ pub trait Listener<T>: Future<Output = T> + __sealed::Sealed {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::{Event, Listener};
     ///
     /// let event = Event::new();
     /// let listener = event.listen();
@@ -822,7 +817,7 @@ pub trait Listener<T>: Future<Output = T> + __sealed::Sealed {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{Event, prelude::*};
+    /// use event_listener::{Event, Listener};
     ///
     /// let event = Event::new();
     /// let listener1 = event.listen();
@@ -895,11 +890,6 @@ macro_rules! forward_impl_to_listener {
 ///
 /// See the [`Listener`] trait for the functionality exposed by this type.
 ///
-/// The listener is not registered into the linked list inside of the [`Event`] by default if
-/// it is created via the `new()` method. It needs to be pinned first before being inserted
-/// using the `listen()` method. After the listener has begun `listen`ing, the user can
-/// `await` it like a future or call `wait()` to block the current thread until it is notified.
-///
 /// This structure allocates the listener on the heap.
 pub struct EventListener<T = ()> {
     listener: Pin<Box<InnerListener<T, Arc<Inner<T>>>>>,
@@ -933,6 +923,95 @@ impl<T> EventListener<T> {
 forward_impl_to_listener! { T => EventListener<T> }
 
 /// Create a stack-based event listener for an [`Event`].
+///
+/// [`EventListener`] allocates the listener on the heap. While this works for most use cases, in
+/// practice this heap allocation can be expensive for repeated uses. This method allows for
+/// allocating the listener on the stack instead.
+///
+/// There are limitations to using this macro instead of the [`EventListener`] type, however.
+/// Firstly, it is significantly less flexible. The listener is locked to the current stack
+/// frame, meaning that it can't be returned or put into a place where it would go out of
+/// scope. For instance, this will not work:
+///
+/// ```compile_fail
+/// use event_listener::{Event, Listener, listener};
+///
+/// fn get_listener(event: &Event) -> impl Listener {
+///     listener!(event => cant_return_this);
+///     cant_return_this
+/// }
+/// ```
+///
+/// In addition, the types involved in creating this listener are not able to be named. Therefore
+/// it cannot be used in hand-rolled futures or similar structures.
+///
+/// The type created by this macro implements [`Listener`], allowing it to be used in cases where
+/// [`EventListener`] would normally be used.
+///
+/// ## Example
+///
+/// To use this macro, replace cases where you would normally use this...
+///
+/// ```no_compile
+/// let listener = event.listen();
+/// ```
+///
+/// ...with this:
+///
+/// ```no_compile
+/// listener!(event => listener);
+/// ```
+///
+/// Here is the top level example from this crate's documentation, but using [`listener`] instead
+/// of [`EventListener`].
+///
+/// ```
+/// use std::sync::atomic::{AtomicBool, Ordering};
+/// use std::sync::Arc;
+/// use std::thread;
+/// use std::time::Duration;
+/// use std::usize;
+/// use event_listener::{Event, listener, IntoNotification, Listener};
+///
+/// let flag = Arc::new(AtomicBool::new(false));
+/// let event = Arc::new(Event::new());
+///
+/// // Spawn a thread that will set the flag after 1 second.
+/// thread::spawn({
+///     let flag = flag.clone();
+///     let event = event.clone();
+///     move || {
+///         // Wait for a second.
+///         thread::sleep(Duration::from_secs(1));
+///
+///         // Set the flag.
+///         flag.store(true, Ordering::SeqCst);
+///
+///         // Notify all listeners that the flag has been set.
+///         event.notify(usize::MAX);
+///     }
+/// });
+///
+/// // Wait until the flag is set.
+/// loop {
+///     // Check the flag.
+///     if flag.load(Ordering::SeqCst) {
+///         break;
+///     }
+///
+///     // Start listening for events.
+///     // NEW: Changed to a stack-based listener.
+///     listener!(event => listener);
+///
+///     // Check the flag again after creating the listener.
+///     if flag.load(Ordering::SeqCst) {
+///         break;
+///     }
+///
+///     // Wait for a notification and continue the loop.
+///     listener.wait();
+/// }
+/// ```
 #[macro_export]
 macro_rules! listener {
     ($event:expr => $listener:ident) => {
@@ -1313,6 +1392,7 @@ pub mod __private {
     pin_project_lite::pin_project! {
         /// Space on the stack where a stack-based listener can be allocated.
         #[doc(hidden)]
+        #[project(!Unpin)]
         pub struct StackSlot<'ev, T> {
             #[pin]
             listener: InnerListener<T, &'ev Inner<T>>
@@ -1325,6 +1405,9 @@ pub mod __private {
             f.debug_struct("StackSlot").finish_non_exhaustive()
         }
     }
+
+    impl<T> core::panic::UnwindSafe for StackSlot<'_, T> {}
+    impl<T> core::panic::RefUnwindSafe for StackSlot<'_, T> {}
 
     impl<'ev, T> StackSlot<'ev, T> {
         /// Create a new `StackSlot` on the stack.
@@ -1357,6 +1440,10 @@ pub mod __private {
     pub struct StackListener<'ev, 'stack, T> {
         slot: Pin<&'stack mut StackSlot<'ev, T>>,
     }
+
+    impl<T> core::panic::UnwindSafe for StackListener<'_, '_, T> {}
+    impl<T> core::panic::RefUnwindSafe for StackListener<'_, '_, T> {}
+    impl<T> Unpin for StackListener<'_, '_, T> {}
 
     impl<T> fmt::Debug for StackListener<'_, '_, T> {
         #[inline]
