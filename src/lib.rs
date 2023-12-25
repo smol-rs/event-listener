@@ -1112,6 +1112,7 @@ impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
                             .expect("We never removed ourself from the list")
                             .notified();
                     }
+                    parker.park_deadline(deadline);
                 }
             }
 
