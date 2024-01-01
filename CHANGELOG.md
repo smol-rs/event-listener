@@ -1,3 +1,7 @@
+# Version 4.0.2
+
+- Avoid spinning in `wait_deadline`. (#107)
+
 # Version 4.0.1
 
 - Fix a use-after-move error after an `EventListener` is assigned to listen to
