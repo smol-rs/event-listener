@@ -1,3 +1,7 @@
+# Version 4.0.3
+
+- Relax MSRV to 1.60. (#110)
+
 # Version 4.0.2
 
 - Avoid spinning in `wait_deadline`. (#107)
