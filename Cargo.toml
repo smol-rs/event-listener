@@ -38,7 +38,7 @@ futures-lite = "2.0.0"
 waker-fn = "1"
 
 [dev-dependencies.criterion]
-version = "0.4.0"
+version = "0.5"
 default-features = false
 features = ["cargo_bench_support"]
 
