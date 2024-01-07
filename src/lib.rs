@@ -1045,28 +1045,22 @@ impl<T, B: Borrow<Inner<T>> + Unpin> Listener<T, B> {
     /// Wait until the provided deadline.
     #[cfg(all(feature = "std", not(target_family = "wasm")))]
     fn wait_internal(mut self: Pin<&mut Self>, deadline: Option<Instant>) -> Option<T> {
-        use std::cell::RefCell;
+        fn parker_and_task() -> (Parker, Task) {
+            let parker = Parker::new();
+            let unparker = parker.unparker();
+            (parker, Task::Unparker(unparker))
+        }
 
         std::thread_local! {
             /// Cached thread-local parker/unparker pair.
-            static PARKER: RefCell<Option<(Parker, Task)>> = RefCell::new(None);
+            static PARKER: (Parker, Task) = parker_and_task();
         }
 
         // Try to borrow the thread-local parker/unparker pair.
         PARKER
             .try_with({
                 let this = self.as_mut();
-                |parker| {
-                    let mut pair = parker
-                        .try_borrow_mut()
-                        .expect("Shouldn't be able to borrow parker reentrantly");
-                    let (parker, unparker) = pair.get_or_insert_with(|| {
-                        let (parker, unparker) = parking::pair();
-                        (parker, Task::Unparker(unparker))
-                    });
-
-                    this.wait_with_parker(deadline, parker, unparker.as_task_ref())
-                }
+                |(parker, unparker)| this.wait_with_parker(deadline, parker, unparker.as_task_ref())
             })
             .unwrap_or_else(|_| {
                 // If the pair isn't accessible, we may be being called in a destructor.
