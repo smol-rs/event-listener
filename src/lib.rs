@@ -481,7 +481,8 @@ impl<T> Event<T> {
     }
 
     /// Return the listener count
-    ///
+    /// This is just a snapshot of the number of listeners at this point in time. It is possible for the actual number to change at any point.
+    /// The number should only ever be used as a hint.
     /// This is only available when `std` feature is enabled.
     ///
     /// # Examples

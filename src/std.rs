@@ -56,8 +56,6 @@ impl<T> List<T> {
     }
 
     // Get the listener count by blocking
-    // This is just a snapshot of the number of listeners at this point in time. It is possible for the actual number to change at any point.
-    // The number should only ever be used as a hint.
     pub(crate) fn total_listeners_wait(&self) -> usize {
         match self.0.lock() {
             Ok(mutex) => mutex.len,
