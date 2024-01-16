@@ -54,6 +54,14 @@ impl<T> List<T> {
             Err(_) => Err("<locked>"),
         }
     }
+
+    // Get the listener count by blocking
+    pub(crate) fn total_listeners_wait(&self) -> Result<usize, String> {
+        match self.0.lock() {
+            Ok(mutex) => Ok(mutex.len),
+            Err(_) => Err("MutexPoisoned".into()),
+        }
+    }
 }
 
 impl<T> crate::Inner<T> {
