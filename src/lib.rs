@@ -480,7 +480,7 @@ impl<T> Event<T> {
         inner
     }
 
-    /// Return the listener count by aquiring a lock
+    /// Return the listener count by acquiring a lock
     /// This is just a snapshot of the number of listeners at this point in time. It is possible for the actual number to change at any point.
     /// The number should only ever be used as a hint.
     /// This is only available when `std` feature is enabled.
