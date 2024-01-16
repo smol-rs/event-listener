@@ -491,17 +491,17 @@ impl<T> Event<T> {
     ///
     /// let event = Event::new();
     ///
-    /// assert_eq!(event.total_listeners().unwrap(), 0);
+    /// assert_eq!(event.total_listeners(), 0);
     ///
     /// let listener1 = event.listen();
-    /// assert_eq!(event.total_listeners().unwrap(), 1);    
+    /// assert_eq!(event.total_listeners(), 1);    
     ///
     /// let listener2 = event.listen();
-    /// assert_eq!(event.total_listeners().unwrap(), 2);        
+    /// assert_eq!(event.total_listeners(), 2);        
     ///
     /// drop(listener1);
     /// drop(listener2);
-    /// assert_eq!(event.total_listeners().unwrap(), 0);        
+    /// assert_eq!(event.total_listeners(), 0);        
     /// ```
     #[cfg(feature = "std")]
     #[inline]
