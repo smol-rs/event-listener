@@ -174,9 +174,9 @@ impl<T> fmt::Debug for Event<T> {
         match self.try_inner() {
             Some(inner) => {
                 let notified_count = inner.notified.load(Ordering::Relaxed);
-                let total_count = match inner.list.total_listeners() {
-                    Ok(total_count) => total_count,
-                    Err(_) => {
+                let total_count = match inner.list.try_total_listeners() {
+                    Some(total_count) => total_count,
+                    None => {
                         return f
                             .debug_tuple("Event")
                             .field(&format_args!("<locked>"))
@@ -480,12 +480,20 @@ impl<T> Event<T> {
         inner
     }
 
-    /// Return the listener count by acquiring a lock.
+    /// Get the number of listeners currently listening to this [`Event`].
     ///
-    /// This is just a snapshot of the number of listeners at this point in time.
-    /// It is possible for the actual number to change at any point.
-    /// The number should only ever be used as a hint.
-    /// This is only available when `std` feature is enabled.
+    /// This call returns the number of [`EventListener`]s that are currently listening to
+    /// this event. It does this by acquiring the internal event lock and reading the listener
+    /// count. Therefore it is only available for `std`-enabled platforms.
+    ///
+    /// # Caveats
+    ///
+    /// This function returns just a snapshot of the number of listeners at this point in time.
+    /// Due to the nature of multi-threaded CPUs, it is possible that this number will be
+    /// inaccurate by the time that this function returns.
+    ///
+    /// It is possible for the actual number to change at any point. Therefore, the number should
+    /// only ever be used as a hint.
     ///
     /// # Examples
     ///
@@ -510,7 +518,7 @@ impl<T> Event<T> {
     #[inline]
     pub fn total_listeners(&self) -> usize {
         if let Some(inner) = self.try_inner() {
-            inner.list.total_listeners_wait()
+            inner.list.total_listeners()
         } else {
             0
         }
