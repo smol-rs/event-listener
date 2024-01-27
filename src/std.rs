@@ -44,23 +44,15 @@ impl<T> List<T> {
             notified: 0,
         }))
     }
-    // Accessor method because fields are private, not sure how to go around it.
-    pub fn total_listeners(&self) -> Result<usize, &str> {
-        match self.0.try_lock() {
-            Ok(mutex) => {
-                let len = mutex.len;
-                Ok(len)
-            }
-            Err(_) => Err("<locked>"),
-        }
+
+    /// Get the total number of listeners without blocking.
+    pub fn try_total_listeners(&self) -> Option<usize> {
+        self.0.try_lock().ok().map(|list| list.len)
     }
 
-    // Get the listener count by blocking.
-    pub(crate) fn total_listeners_wait(&self) -> usize {
-        match self.0.lock() {
-            Ok(mutex) => mutex.len,
-            Err(err) => panic!("{err}"),
-        }
+    /// Get the total number of listeners with blocking.
+    pub(crate) fn total_listeners(&self) -> usize {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).len
     }
 }
 
