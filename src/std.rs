@@ -46,7 +46,7 @@ impl<T> List<T> {
     }
 
     /// Get the total number of listeners without blocking.
-    pub fn try_total_listeners(&self) -> Option<usize> {
+    pub(crate) fn try_total_listeners(&self) -> Option<usize> {
         self.0.try_lock().ok().map(|list| list.len)
     }
 
