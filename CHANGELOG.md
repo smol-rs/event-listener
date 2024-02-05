@@ -1,3 +1,10 @@
+# Version 5.0.0
+
+- **Breaking:** Rework the API to afford better usage. (#105)
+  - The heap-based API of the v2.x line is back.
+  - However, there is a stack-based API as an alternative.
+- Add a way to get the total number of listeners. (#114)
+
 # Version 4.0.3
 
 - Relax MSRV to 1.60. (#110)
