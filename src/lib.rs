@@ -508,14 +508,14 @@ impl<T> Event<T> {
     /// assert_eq!(event.total_listeners(), 0);
     ///
     /// let listener1 = event.listen();
-    /// assert_eq!(event.total_listeners(), 1);    
+    /// assert_eq!(event.total_listeners(), 1);
     ///
     /// let listener2 = event.listen();
-    /// assert_eq!(event.total_listeners(), 2);        
+    /// assert_eq!(event.total_listeners(), 2);
     ///
     /// drop(listener1);
     /// drop(listener2);
-    /// assert_eq!(event.total_listeners(), 0);        
+    /// assert_eq!(event.total_listeners(), 0);
     /// ```
     #[cfg(feature = "std")]
     #[inline]
@@ -1364,6 +1364,7 @@ fn __test_send_and_sync() {
     fn _assert_send<T: Send>() {}
     fn _assert_sync<T: Sync>() {}
 
+    _assert_send::<crate::__private::StackSlot<'_, ()>>();
     _assert_send::<Event<()>>();
     _assert_sync::<Event<()>>();
     _assert_send::<EventListener<()>>();
@@ -1408,6 +1409,7 @@ pub mod __private {
 
     impl<T> core::panic::UnwindSafe for StackSlot<'_, T> {}
     impl<T> core::panic::RefUnwindSafe for StackSlot<'_, T> {}
+    unsafe impl<T> Send for StackSlot<'_, T> {}
 
     impl<'ev, T> StackSlot<'ev, T> {
         /// Create a new `StackSlot` on the stack.
