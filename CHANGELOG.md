@@ -1,3 +1,7 @@
+# Version 5.1.0
+
+- Make `StackSlot` `Send`. (#119)
+
 # Version 5.0.0
 
 - **Breaking:** Rework the API to afford better usage. (#105)
