@@ -67,7 +67,7 @@
 //!
 //! [`portable-atomic`]: https://crates.io/crates/portable-atomic
 
-#![cfg_attr(all(not(feature = "std"), not(test)), no_std)]
+#![cfg_attr(not(feature = "std"), no_std)]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 #![doc(
     html_favicon_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
@@ -76,7 +76,10 @@
     html_logo_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
 )]
 
+#[cfg(not(feature = "std"))]
 extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std as alloc;
 
 #[cfg_attr(feature = "std", path = "std.rs")]
 #[cfg_attr(not(feature = "std"), path = "no_std.rs")]
@@ -84,6 +87,7 @@ mod sys;
 
 mod notify;
 
+#[cfg(not(feature = "std"))]
 use alloc::boxed::Box;
 
 use core::borrow::Borrow;
@@ -1365,6 +1369,9 @@ fn __test_send_and_sync() {
     fn _assert_sync<T: Sync>() {}
 
     _assert_send::<crate::__private::StackSlot<'_, ()>>();
+    _assert_sync::<crate::__private::StackSlot<'_, ()>>();
+    _assert_send::<crate::__private::StackListener<'_, '_, ()>>();
+    _assert_sync::<crate::__private::StackListener<'_, '_, ()>>();
     _assert_send::<Event<()>>();
     _assert_sync::<Event<()>>();
     _assert_send::<EventListener<()>>();
@@ -1410,6 +1417,7 @@ pub mod __private {
     impl<T> core::panic::UnwindSafe for StackSlot<'_, T> {}
     impl<T> core::panic::RefUnwindSafe for StackSlot<'_, T> {}
     unsafe impl<T> Send for StackSlot<'_, T> {}
+    unsafe impl<T> Sync for StackSlot<'_, T> {}
 
     impl<'ev, T> StackSlot<'ev, T> {
         /// Create a new `StackSlot` on the stack.
