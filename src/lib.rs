@@ -76,7 +76,10 @@
     html_logo_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
 )]
 
+#[cfg(not(feature = "std"))]
 extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std as alloc;
 
 #[cfg_attr(feature = "std", path = "std.rs")]
 #[cfg_attr(not(feature = "std"), path = "no_std.rs")]
