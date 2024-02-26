@@ -1,3 +1,7 @@
+# Version 5.2.0
+
+- Make `StackSlot` `Sync`. (#121)
+
 # Version 5.1.0
 
 - Make `StackSlot` `Send`. (#119)
