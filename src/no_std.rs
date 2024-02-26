@@ -832,7 +832,6 @@ unsafe impl<T: Send> Sync for Mutex<T> {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Task;
 
     #[cfg(target_family = "wasm")]
     use wasm_bindgen_test::wasm_bindgen_test as test;
