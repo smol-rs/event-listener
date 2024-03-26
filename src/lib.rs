@@ -1248,7 +1248,7 @@ impl<T> RegisterResult<T> {
         match self {
             Self::Notified(tag) => Some(tag),
             Self::Registered => None,
-            Self::NeverInserted => panic!("listener was never inserted into the list"),
+            Self::NeverInserted => panic!("{}", NEVER_INSERTED_PANIC),
         }
     }
 }
@@ -1325,6 +1325,10 @@ impl TaskRef<'_> {
         }
     }
 }
+
+const NEVER_INSERTED_PANIC: &str = "\
+EventListener was not inserted into the linked list, make sure you're not polling \
+EventListener/listener! after it has finished";
 
 /// Synchronization primitive implementation.
 mod sync {
