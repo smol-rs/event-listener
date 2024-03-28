@@ -16,7 +16,7 @@ use node::{Node, NothingProducer, TaskWaiting};
 
 use crate::notify::{GenericNotify, Internal, Notification};
 use crate::sync::atomic::{AtomicBool, Ordering};
-use crate::sync::cell::{Cell, UnsafeCell};
+use crate::sync::cell::{Cell, ConstPtr, UnsafeCell};
 use crate::sync::Arc;
 use crate::{RegisterResult, State, Task, TaskRef};
 
@@ -771,7 +771,10 @@ impl<T> Mutex<T> {
             .is_ok()
         {
             // We have successfully locked the mutex.
-            Some(MutexGuard { mutex: self })
+            Some(MutexGuard {
+                mutex: self,
+                guard: self.value.get(),
+            })
         } else {
             self.try_lock_slow()
         }
@@ -790,7 +793,10 @@ impl<T> Mutex<T> {
                 .is_ok()
             {
                 // We have successfully locked the mutex.
-                return Some(MutexGuard { mutex: self });
+                return Some(MutexGuard {
+                    mutex: self,
+                    guard: self.value.get(),
+                });
             }
 
             // Use atomic loads instead of compare-exchange.
@@ -804,6 +810,7 @@ impl<T> Mutex<T> {
 
 pub(crate) struct MutexGuard<'a, T> {
     mutex: &'a Mutex<T>,
+    guard: ConstPtr<T>,
 }
 
 impl<'a, T> Drop for MutexGuard<'a, T> {
@@ -816,13 +823,13 @@ impl<'a, T> ops::Deref for MutexGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        unsafe { &*self.mutex.value.get() }
+        unsafe { self.guard.deref() }
     }
 }
 
 impl<'a, T> ops::DerefMut for MutexGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.mutex.value.get() }
+        unsafe { self.guard.deref_mut() }
     }
 }
 
