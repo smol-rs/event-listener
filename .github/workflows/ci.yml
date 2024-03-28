@@ -114,3 +114,14 @@ jobs:
       - uses: rustsec/audit-check@master
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  loom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable
+      - name: Loom tests
+        run: RUSTFLAGS="--cfg=loom" cargo test --release --test loom --features loom  
+        
+    

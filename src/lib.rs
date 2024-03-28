@@ -105,7 +105,10 @@ use {
 };
 
 use sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
-use sync::{Arc, WithMut};
+use sync::Arc;
+
+#[cfg(not(loom))]
+use sync::WithMut;
 
 use notify::{Internal, NotificationPrivate};
 pub use notify::{IntoNotification, Notification};
@@ -216,9 +219,16 @@ impl<T> Event<T> {
     ///
     /// let event = Event::<usize>::with_tag();
     /// ```
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", not(loom)))]
     #[inline]
     pub const fn with_tag() -> Self {
+        Self {
+            inner: AtomicPtr::new(ptr::null_mut()),
+        }
+    }
+    #[cfg(all(feature = "std", loom))]
+    #[inline]
+    pub fn with_tag() -> Self {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
         }
@@ -543,7 +553,16 @@ impl Event<()> {
     /// let event = Event::new();
     /// ```
     #[inline]
+    #[cfg(not(loom))]
     pub const fn new() -> Self {
+        Self {
+            inner: AtomicPtr::new(ptr::null_mut()),
+        }
+    }
+
+    #[inline]
+    #[cfg(loom)]
+    pub fn new() -> Self {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
         }
@@ -1119,6 +1138,12 @@ impl<T, B: Borrow<Inner<T>> + Unpin> InnerListener<T, B> {
             match deadline {
                 None => parker.park(),
 
+                #[cfg(loom)]
+                Some(_deadline) => {
+                    panic!("parking does not support timeouts under loom");
+                }
+
+                #[cfg(not(loom))]
                 Some(deadline) => {
                     // Make sure we're not timed out already.
                     let now = Instant::now();
@@ -1330,10 +1355,9 @@ const NEVER_INSERTED_PANIC: &str = "\
 EventListener was not inserted into the linked list, make sure you're not polling \
 EventListener/listener! after it has finished";
 
+#[cfg(not(loom))]
 /// Synchronization primitive implementation.
 mod sync {
-    pub(super) use core::cell;
-
     #[cfg(not(feature = "portable-atomic"))]
     pub(super) use alloc::sync::Arc;
     #[cfg(not(feature = "portable-atomic"))]
@@ -1344,7 +1368,7 @@ mod sync {
     #[cfg(feature = "portable-atomic")]
     pub(super) use portable_atomic_util::Arc;
 
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", not(loom)))]
     pub(super) use std::sync::{Mutex, MutexGuard};
 
     pub(super) trait WithMut {
@@ -1366,6 +1390,51 @@ mod sync {
             f(self.get_mut())
         }
     }
+
+    pub(crate) mod cell {
+        pub(crate) use core::cell::Cell;
+
+        /// This newtype around *mut T exists for interoperability with loom::cell::ConstPtr,
+        /// which works as a guard and performs additional logic to track access scope.
+        pub(crate) struct ConstPtr<T>(*mut T);
+        impl<T> ConstPtr<T> {
+            pub(crate) unsafe fn deref(&self) -> &T {
+                &*self.0
+            }
+
+            #[allow(unused)] // std code does not need this
+            pub(crate) unsafe fn deref_mut(&mut self) -> &mut T {
+                &mut *self.0
+            }
+        }
+
+        /// This UnsafeCell wrapper exists for interoperability with loom::cell::UnsafeCell, and
+        /// only contains the interface that is needed for this crate.
+        #[derive(Debug, Default)]
+        pub(crate) struct UnsafeCell<T>(core::cell::UnsafeCell<T>);
+
+        impl<T> UnsafeCell<T> {
+            pub(crate) fn new(data: T) -> UnsafeCell<T> {
+                UnsafeCell(core::cell::UnsafeCell::new(data))
+            }
+
+            pub(crate) fn get(&self) -> ConstPtr<T> {
+                ConstPtr(self.0.get())
+            }
+
+            #[allow(dead_code)] // no_std does not need this
+            pub(crate) fn into_inner(self) -> T {
+                self.0.into_inner()
+            }
+        }
+    }
+}
+
+#[cfg(loom)]
+/// Synchronization primitive implementation.
+mod sync {
+    pub(super) use loom::cell;
+    pub(super) use loom::sync::{atomic, Arc, Mutex, MutexGuard};
 }
 
 fn __test_send_and_sync() {
