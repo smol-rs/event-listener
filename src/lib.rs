@@ -1101,19 +1101,30 @@ impl<T, B: Borrow<Inner<T>> + Unpin> InnerListener<T, B> {
             static PARKER: (Parker, Task) = parker_and_task();
         }
 
-        // Try to borrow the thread-local parker/unparker pair.
-        PARKER
-            .try_with({
-                let this = self.as_mut();
-                |(parker, unparker)| this.wait_with_parker(deadline, parker, unparker.as_task_ref())
-            })
-            .unwrap_or_else(|_| {
-                // If the pair isn't accessible, we may be being called in a destructor.
-                // Just create a new pair.
-                let (parker, unparker) = parking::pair();
-                self.as_mut()
-                    .wait_with_parker(deadline, &parker, TaskRef::Unparker(&unparker))
-            })
+        if cfg!(miri) {
+            // Try to borrow the thread-local parker/unparker pair.
+            PARKER
+                .try_with({
+                    let this = self.as_mut();
+                    |(parker, unparker)| this.wait_with_parker(deadline, parker, unparker.as_task_ref())
+                })
+                .unwrap_or_else(|_| {
+                    // If the pair isn't accessible, we may be being called in a destructor.
+                    // Just create a new pair.
+                    self.as_mut().wait_with_fresh_parker(deadline)
+                })
+        } else {
+            // Miri seems to have issues keeping track of thread-local wakers. Just use a fresh pair.
+            self.wait_with_fresh_parker(deadline)
+        }
+    }
+
+    /// Wait with a fresh parker and unparker pair.
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    fn wait_with_fresh_parker(mut self: Pin<&mut Self>, deadline: Option<Instant>) -> Option<T> {
+        let (parker, unparker) = parking::pair();
+        self.as_mut()
+            .wait_with_parker(deadline, &parker, TaskRef::Unparker(&unparker))
     }
 
     /// Wait until the provided deadline using the specified parker/unparker pair.
