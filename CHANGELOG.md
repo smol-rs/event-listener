@@ -1,3 +1,8 @@
+# Version 5.3.0
+
+- Add a `loom` implementation. This feature is unstable and is not semver-supported. (#126)
+- Make the panic message for polling the `EventListener` after it has completed more clear. (#125)
+
 # Version 5.2.0
 
 - Make `StackSlot` `Sync`. (#121)
