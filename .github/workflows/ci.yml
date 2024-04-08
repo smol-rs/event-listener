@@ -63,6 +63,27 @@ jobs:
       - run: wasm-pack test --node
       - run: wasm-pack test --node --no-default-features
       - run: wasm-pack test --node --no-default-features --features portable-atomic
+      - name: Clone some dependent crates
+        run: |
+          git clone https://github.com/smol-rs/event-listener-strategy.git
+          git clone https://github.com/smol-rs/async-channel.git
+          git clone https://github.com/smol-rs/async-lock.git
+      - name: Patch dependent crates
+        run: |
+          echo '[patch.crates-io]' >> event-listener-strategy/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> event-listener-strategy/Cargo.toml
+          echo '[patch.crates-io]' >> async-channel/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> async-channel/Cargo.toml
+          echo 'event-listener-strategy = { path = "../event-listener-strategy" }' >> async-channel/Cargo.toml
+          echo '[patch.crates-io]' >> event-listener-strategy/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> async-lock/Cargo.toml
+          echo 'event-listener-strategy = { path = "../event-listener-strategy" }' >> async-lock/Cargo.toml
+          echo 'async-channel = { path = "../async-channel" }' >> async-lock/Cargo.toml
+      - name: Test dependent crates
+        run: |
+           cargo test --manifest-path=event-listener-strategy/Cargo.toml
+           cargo test --manifest-path=async-channel/Cargo.toml
+           cargo test --manifest-path=async-lock/Cargo.toml
 
   msrv:
     runs-on: ubuntu-latest
