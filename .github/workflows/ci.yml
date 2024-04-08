@@ -75,7 +75,7 @@ jobs:
           echo '[patch.crates-io]' >> async-channel/Cargo.toml
           echo 'event-listener = { path = ".." }' >> async-channel/Cargo.toml
           echo 'event-listener-strategy = { path = "../event-listener-strategy" }' >> async-channel/Cargo.toml
-          echo '[patch.crates-io]' >> event-listener-strategy/Cargo.toml
+          echo '[patch.crates-io]' >> async-lock/Cargo.toml
           echo 'event-listener = { path = ".." }' >> async-lock/Cargo.toml
           echo 'event-listener-strategy = { path = "../event-listener-strategy" }' >> async-lock/Cargo.toml
           echo 'async-channel = { path = "../async-channel" }' >> async-lock/Cargo.toml
@@ -122,6 +122,28 @@ jobs:
       - run: cargo miri test --all
       - run: cargo miri test --no-default-features --tests
       - run: cargo miri test --no-default-features --features portable-atomic --tests
+      - name: Clone some dependent crates
+        run: |
+          git clone https://github.com/smol-rs/event-listener-strategy.git
+          git clone https://github.com/smol-rs/async-channel.git
+          git clone https://github.com/smol-rs/async-lock.git
+      - name: Patch dependent crates
+        run: |
+          echo '[patch.crates-io]' >> event-listener-strategy/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> event-listener-strategy/Cargo.toml
+          echo '[patch.crates-io]' >> async-channel/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> async-channel/Cargo.toml
+          echo 'event-listener-strategy = { path = "../event-listener-strategy" }' >> async-channel/Cargo.toml
+          echo '[patch.crates-io]' >> async-lock/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> async-lock/Cargo.toml
+          echo 'event-listener-strategy = { path = "../event-listener-strategy" }' >> async-lock/Cargo.toml
+          echo 'async-channel = { path = "../async-channel" }' >> async-lock/Cargo.toml
+      - name: Test dependent crates
+        # async-channel isn't included here as it appears to be broken on MIRI.
+        # See https://github.com/smol-rs/async-channel/issues/85
+        run: |
+           cargo miri test --manifest-path=event-listener-strategy/Cargo.toml
+           cargo miri test --manifest-path=async-lock/Cargo.toml
 
   security_audit:
     permissions:
