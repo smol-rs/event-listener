@@ -1,6 +1,6 @@
 # event-listener
 
-[![Build](https://github.com/smol-rs/event-listener/workflows/CI/badge.svg)](
+[![Build](https://github.com/smol-rs/event-listener/workflows/Build%20and%20test/badge.svg)](
 https://github.com/smol-rs/event-listener/actions)
 [![License](https://img.shields.io/badge/license-Apache--2.0_OR_MIT-blue.svg)](
 https://github.com/smol-rs/event-listener)
@@ -17,7 +17,7 @@ You can use this crate to turn non-blocking data structures into async or blocki
 structures. See a [simple mutex] implementation that exposes an async and a blocking interface
 for acquiring locks.
 
-[eventcounts]: https://www.1024cores.net/home/lock-free-algorithms/eventcounts
+[eventcounts]: http://www.1024cores.net/home/lock-free-algorithms/eventcounts
 [simple mutex]: ./examples/mutex.rs
 
 ## Examples
@@ -74,8 +74,8 @@ loop {
 
 Licensed under either of
 
- * Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or https://www.apache.org/licenses/LICENSE-2.0)
- * MIT license ([LICENSE-MIT](LICENSE-MIT) or https://opensource.org/licenses/MIT)
+ * Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+ * MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
 
