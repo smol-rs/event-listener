@@ -90,7 +90,7 @@ impl<T> Mutex<T> {
                 }
                 Some(l) => {
                     // Wait until a notification is received.
-                    if !l.wait_deadline(deadline) {
+                    if l.wait_deadline(deadline).is_none() {
                         return None;
                     }
                 }
