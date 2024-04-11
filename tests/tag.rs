@@ -90,7 +90,6 @@ fn drop_notify_with_tag() {
 }
 
 #[test]
-#[ignore = "need to avoid mutex poisoning"]
 fn panic_with_tag() {
     let event = Event::with_tag();
 

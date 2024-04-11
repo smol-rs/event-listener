@@ -109,7 +109,7 @@ impl<T> Inner<T> {
     fn lock(&self) -> ListGuard<'_, T> {
         ListGuard {
             inner: self,
-            guard: self.list.lock().unwrap(),
+            guard: self.list.lock().unwrap_or_else(|e| e.into_inner()),
         }
     }
 
