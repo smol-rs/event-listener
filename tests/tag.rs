@@ -28,8 +28,8 @@ fn notify_tag() {
     assert!(notified(&mut l2).is_none());
     assert!(notified(&mut l3).is_none());
 
-    event.notify(2.tag(true));
-    event.notify(1.tag(false));
+    assert_eq!(event.notify(2.tag(true)), 2);
+    assert_eq!(event.notify(1.tag(false)), 0);
     assert_eq!(notified(&mut l1), Some(true));
     assert_eq!(notified(&mut l2), Some(true));
     assert!(notified(&mut l3).is_none());
@@ -43,9 +43,9 @@ fn notify_additional_tag() {
     let mut l2 = event.listen();
     let mut l3 = event.listen();
 
-    event.notify(1.additional().tag(1));
-    event.notify(1.tag(2));
-    event.notify(1.additional().tag(3));
+    assert_eq!(event.notify(1.additional().tag(1)), 1);
+    assert_eq!(event.notify(1.tag(2)), 0);
+    assert_eq!(event.notify(1.additional().tag(3)), 1);
 
     assert_eq!(notified(&mut l1), Some(1));
     assert_eq!(notified(&mut l2), Some(3));
@@ -83,7 +83,7 @@ fn drop_notify_with_tag() {
     let mut l2 = event.listen();
     let mut l3 = event.listen();
 
-    event.notify(1.tag_with(|| 5i32));
+    assert_eq!(event.notify(1.tag_with(|| 5i32)), 1);
     drop(l1);
     assert_eq!(notified(&mut l2), Some(5));
     assert!(notified(&mut l3).is_none());

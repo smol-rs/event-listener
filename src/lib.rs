@@ -301,7 +301,7 @@ impl Event {
     /// event.notify(2);
     /// ```
     #[inline]
-    pub fn notify_relaxed(&self, n: usize) {
+    pub fn notify_relaxed(&self, n: usize) -> usize {
         self.notify(n.relaxed())
     }
 
@@ -336,7 +336,7 @@ impl Event {
     /// event.notify_additional(1);
     /// ```
     #[inline]
-    pub fn notify_additional(&self, n: usize) {
+    pub fn notify_additional(&self, n: usize) -> usize {
         self.notify(n.additional())
     }
 
@@ -376,8 +376,8 @@ impl Event {
     /// event.notify_additional_relaxed(1);
     /// ```
     #[inline]
-    pub fn notify_additional_relaxed(&self, n: usize) {
-        self.notify(n.additional().relaxed());
+    pub fn notify_additional_relaxed(&self, n: usize) -> usize {
+        self.notify(n.additional().relaxed())
     }
 }
 
@@ -453,7 +453,7 @@ impl<T> Event<T> {
     /// event.notify(2);
     /// ```
     #[inline]
-    pub fn notify(&self, notify: impl IntoNotification<Tag = T>) {
+    pub fn notify(&self, notify: impl IntoNotification<Tag = T>) -> usize {
         let notify = notify.into_notification();
 
         // Make sure the notification comes after whatever triggered it.
@@ -470,9 +470,11 @@ impl<T> Event<T> {
             };
 
             if inner.notified.load(Ordering::Acquire) < limit {
-                inner.lock().notify(notify);
+                return inner.lock().notify(notify);
             }
         }
+
+        0
     }
 
     /// Returns a reference to the inner state if it was initialized.
@@ -1062,22 +1064,24 @@ impl<T> List<T> {
 
     /// Notifies a number of entries.
     #[cold]
-    fn notify(&mut self, mut notify: impl Notification<Tag = T>) {
+    fn notify(&mut self, mut notify: impl Notification<Tag = T>) -> usize {
         let mut n = notify.count(Internal::new());
 
         if !notify.is_additional(Internal::new()) {
             if n <= self.notified {
-                return;
+                return 0;
             }
             n -= self.notified;
         }
+
+        let count = n;
 
         while n > 0 {
             n -= 1;
 
             // Notify the first unnotified entry.
             match self.start {
-                None => break,
+                None => return count - n - 1,
                 Some(e) => {
                     // Get the entry and move the pointer forward.
                     let e = unsafe { e.as_ref() };
@@ -1099,6 +1103,8 @@ impl<T> List<T> {
                 }
             }
         }
+
+        count - n
     }
 }
 
