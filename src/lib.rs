@@ -59,9 +59,18 @@
 //!     listener.wait();
 //! }
 //! ```
+//!
+//! # Features
+//!
+//! - The `portable-atomic` feature enables the use of the [`portable-atomic`] crate to provide
+//!   atomic operations on platforms that don't support them.
+//!
+//! [`portable-atomic`]: https://crates.io/crates/portable-atomic
 
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 
+use loom::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
+use loom::Arc;
 use notify::{GenericNotify, Internal, NotificationPrivate};
 
 use std::cell::{Cell, UnsafeCell};
@@ -72,8 +81,7 @@ use std::ops::{Deref, DerefMut};
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::ptr::{self, NonNull};
-use std::sync::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
@@ -1016,4 +1024,18 @@ fn full_fence() {
     } else {
         atomic::fence(Ordering::SeqCst);
     }
+}
+
+mod loom {
+    #[cfg(not(feature = "portable-atomic"))]
+    pub(crate) use std::sync::atomic;
+
+    #[cfg(not(feature = "portable-atomic"))]
+    pub(crate) use std::sync::Arc;
+
+    #[cfg(feature = "portable-atomic")]
+    pub(crate) use portable_atomic_crate as atomic;
+
+    #[cfg(feature = "portable-atomic")]
+    pub(crate) use portable_atomic_util::Arc;
 }
