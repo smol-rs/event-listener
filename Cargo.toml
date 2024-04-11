@@ -17,6 +17,11 @@ exclude = ["/.*"]
 [features]
 default = ["std"]
 std = []
+portable-atomic = ["portable-atomic-crate", "portable-atomic-util"]
+
+[dependencies]
+portable-atomic-crate = { version = "1.6.0", package = "portable-atomic", optional = true }
+portable-atomic-util = { version = "0.1.5", optional = true }
 
 [dev-dependencies]
 futures = { version = "0.3", default-features = false, features = ["std"] }

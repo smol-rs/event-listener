@@ -65,11 +65,11 @@ fn counter() {
         let counter = counter.clone();
         move || {
             // Test normal.
-            recv.recv();
+            recv.recv().unwrap();
             counter.increment();
 
             // Test relaxed.
-            recv.recv();
+            recv.recv().unwrap();
             counter.counter.fetch_add(1, Ordering::Relaxed);
             fence(Ordering::SeqCst);
             counter.changed.notify_additional_relaxed(usize::MAX);
@@ -91,7 +91,9 @@ fn counter() {
         futures_lite::pin!(waiter2);
 
         assert!(block_on(poll_once(waiter1.as_mut())).is_none());
+        assert!(block_on(poll_once(waiter2.as_mut())).is_none());
         send.send(()).unwrap();
         assert_eq!(block_on(waiter1), 2);
+        assert_eq!(block_on(waiter2), 2);
     });
 }

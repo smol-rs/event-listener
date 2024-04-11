@@ -2,7 +2,8 @@
 
 #[cfg(feature = "std")]
 use core::fmt;
-use core::sync::atomic::{self, Ordering};
+
+use crate::loom::atomic::{self, Ordering};
 
 pub(crate) use __private::Internal;
 
