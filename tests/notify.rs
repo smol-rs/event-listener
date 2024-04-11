@@ -51,6 +51,42 @@ fn notify_additional() {
 }
 
 #[test]
+fn notify_relaxed() {
+    let event = Event::new();
+
+    let mut l1 = event.listen();
+    let mut l2 = event.listen();
+    let mut l3 = event.listen();
+
+    assert!(!is_notified(&mut l1));
+    assert!(!is_notified(&mut l2));
+    assert!(!is_notified(&mut l3));
+
+    event.notify_relaxed(2);
+    event.notify_relaxed(1);
+    assert!(is_notified(&mut l1));
+    assert!(is_notified(&mut l2));
+    assert!(!is_notified(&mut l3));
+}
+
+#[test]
+fn notify_additional_relaxed() {
+    let event = Event::new();
+
+    let mut l1 = event.listen();
+    let mut l2 = event.listen();
+    let mut l3 = event.listen();
+
+    event.notify_additional_relaxed(1);
+    event.notify_relaxed(1);
+    event.notify_additional_relaxed(1);
+
+    assert!(is_notified(&mut l1));
+    assert!(is_notified(&mut l2));
+    assert!(!is_notified(&mut l3));
+}
+
+#[test]
 fn notify_one() {
     let event = Event::new();
 

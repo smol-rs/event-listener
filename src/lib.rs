@@ -62,6 +62,8 @@
 
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 
+use notify::{GenericNotify, Internal, NotificationPrivate};
+
 use std::cell::{Cell, UnsafeCell};
 use std::fmt;
 use std::future::Future;
@@ -76,6 +78,9 @@ use std::task::{Context, Poll, Waker};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
 use std::usize;
+
+mod notify;
+pub use notify::{IntoNotification, Notification};
 
 /// Inner state of [`Event`].
 struct Inner<T> {
@@ -153,52 +158,7 @@ impl Event {
     /// ```
     #[inline]
     pub const fn new() -> Event {
-        Event {
-            inner: AtomicPtr::new(ptr::null_mut()),
-        }
-    }
-
-    /// Notifies a number of active listeners.
-    ///
-    /// The number is allowed to be zero or exceed the current number of listeners.
-    ///
-    /// In contrast to [`Event::notify_additional()`], this method only makes sure *at least* `n`
-    /// listeners among the active ones are notified.
-    ///
-    /// This method emits a `SeqCst` fence before notifying listeners.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use event_listener::Event;
-    ///
-    /// let event = Event::new();
-    ///
-    /// // This notification gets lost because there are no listeners.
-    /// event.notify(1);
-    ///
-    /// let listener1 = event.listen();
-    /// let listener2 = event.listen();
-    /// let listener3 = event.listen();
-    ///
-    /// // Notifies two listeners.
-    /// //
-    /// // Listener queueing is fair, which means `listener1` and `listener2`
-    /// // get notified here since they start listening before `listener3`.
-    /// event.notify(2);
-    /// ```
-    #[inline]
-    pub fn notify(&self, n: usize) {
-        // Make sure the notification comes after whatever triggered it.
-        full_fence();
-
-        if let Some(inner) = self.try_inner() {
-            // Notify if there is at least one unnotified listener and the number of notified
-            // listeners is less than `n`.
-            if inner.notified.load(Ordering::Acquire) < n {
-                inner.lock().notify(n, || ());
-            }
-        }
+        Self::with_tag()
     }
 
     /// Notifies a number of active listeners without emitting a `SeqCst` fence.
@@ -236,13 +196,7 @@ impl Event {
     /// ```
     #[inline]
     pub fn notify_relaxed(&self, n: usize) {
-        if let Some(inner) = self.try_inner() {
-            // Notify if there is at least one unnotified listener and the number of notified
-            // listeners is less than `n`.
-            if inner.notified.load(Ordering::Acquire) < n {
-                inner.lock().notify(n, || ());
-            }
-        }
+        self.notify(n.relaxed())
     }
 
     /// Notifies a number of active and still unnotified listeners.
@@ -277,15 +231,7 @@ impl Event {
     /// ```
     #[inline]
     pub fn notify_additional(&self, n: usize) {
-        // Make sure the notification comes after whatever triggered it.
-        full_fence();
-
-        if let Some(inner) = self.try_inner() {
-            // Notify if there is at least one unnotified listener.
-            if inner.notified.load(Ordering::Acquire) < usize::MAX {
-                inner.lock().notify_additional(n, || ());
-            }
-        }
+        self.notify(n.additional())
     }
 
     /// Notifies a number of active and still unnotified listeners without emitting a `SeqCst`
@@ -325,16 +271,27 @@ impl Event {
     /// ```
     #[inline]
     pub fn notify_additional_relaxed(&self, n: usize) {
-        if let Some(inner) = self.try_inner() {
-            // Notify if there is at least one unnotified listener.
-            if inner.notified.load(Ordering::Acquire) < usize::MAX {
-                inner.lock().notify_additional(n, || ());
-            }
-        }
+        self.notify(n.additional().relaxed());
     }
 }
 
 impl<T> Event<T> {
+    /// Creates a new [`Event`] with a tag.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::<usize>::with_tag();
+    /// ```
+    #[inline]
+    pub const fn with_tag() -> Event<T> {
+        Event {
+            inner: AtomicPtr::new(ptr::null_mut()),
+        }
+    }
+
     /// Returns a guard listening for a notification.
     ///
     /// This method emits a `SeqCst` fence after registering a listener.
@@ -358,6 +315,58 @@ impl<T> Event<T> {
         // Make sure the listener is registered before whatever happens next.
         full_fence();
         listener
+    }
+
+    /// Notifies a number of active listeners.
+    ///
+    /// The number is allowed to be zero or exceed the current number of listeners.
+    ///
+    /// In contrast to [`Event::notify_additional()`], this method only makes sure *at least* `n`
+    /// listeners among the active ones are notified.
+    ///
+    /// This method emits a `SeqCst` fence before notifying listeners.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    ///
+    /// // This notification gets lost because there are no listeners.
+    /// event.notify(1);
+    ///
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    /// let listener3 = event.listen();
+    ///
+    /// // Notifies two listeners.
+    /// //
+    /// // Listener queueing is fair, which means `listener1` and `listener2`
+    /// // get notified here since they start listening before `listener3`.
+    /// event.notify(2);
+    /// ```
+    #[inline]
+    pub fn notify(&self, notify: impl IntoNotification<Tag = T>) {
+        let notify = notify.into_notification();
+
+        // Make sure the notification comes after whatever triggered it.
+        notify.fence(Internal::new());
+
+        if let Some(inner) = self.try_inner() {
+            let limit = if notify.is_additional(Internal::new()) {
+                // Notify if there is at least one unnotified listener.
+                std::usize::MAX
+            } else {
+                // Notify if there is at least one unnotified listener and the number of notified
+                // listeners is less than `n`.
+                notify.count(Internal::new())
+            };
+
+            if inner.notified.load(Ordering::Acquire) < limit {
+                inner.lock().notify(notify);
+            }
+        }
     }
 
     /// Returns a reference to the inner state if it was initialized.
@@ -722,11 +731,7 @@ impl<T> Drop for EventListener<T> {
                 let mut tag = Some(tag);
 
                 // Then pass it on to another active listener.
-                if additional {
-                    list.notify_additional(1, || tag.take().unwrap());
-                } else {
-                    list.notify(1, || tag.take().unwrap());
-                }
+                list.notify(GenericNotify::new(1, additional, || tag.take().unwrap()));
             }
         }
     }
@@ -929,44 +934,16 @@ impl<T> List<T> {
 
     /// Notifies a number of entries.
     #[cold]
-    fn notify(&mut self, mut n: usize, mut tags: impl FnMut() -> T) {
-        if n <= self.notified {
-            return;
-        }
-        n -= self.notified;
+    fn notify(&mut self, mut notify: impl Notification<Tag = T>) {
+        let mut n = notify.count(Internal::new());
 
-        while n > 0 {
-            n -= 1;
-
-            // Notify the first unnotified entry.
-            match self.start {
-                None => break,
-                Some(e) => {
-                    // Get the entry and move the pointer forward.
-                    let e = unsafe { e.as_ref() };
-                    self.start = e.next.get();
-
-                    // Set the state of this entry to `Notified` and notify.
-                    match e.state.replace(State::Notified {
-                        additional: false,
-                        tag: Some(tags()),
-                    }) {
-                        State::Notified { .. } => {}
-                        State::Created => {}
-                        State::Polling(w) => w.wake(),
-                        State::Waiting(t) => t.unpark(),
-                    }
-
-                    // Update the counter.
-                    self.notified += 1;
-                }
+        if !notify.is_additional(Internal::new()) {
+            if n <= self.notified {
+                return;
             }
+            n -= self.notified;
         }
-    }
 
-    /// Notifies a number of additional entries.
-    #[cold]
-    fn notify_additional(&mut self, mut n: usize, mut tags: impl FnMut() -> T) {
         while n > 0 {
             n -= 1;
 
@@ -980,8 +957,8 @@ impl<T> List<T> {
 
                     // Set the state of this entry to `Notified` and notify.
                     match e.state.replace(State::Notified {
-                        additional: true,
-                        tag: Some(tags()),
+                        additional: notify.is_additional(Internal::new()),
+                        tag: Some(notify.next_tag(Internal::new())),
                     }) {
                         State::Notified { .. } => {}
                         State::Created => {}
