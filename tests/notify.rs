@@ -51,6 +51,12 @@ fn notify_additional() {
 }
 
 #[test]
+fn notify_zero() {
+    let event = Event::new();
+    assert_eq!(event.notify(1), 0);
+}
+
+#[test]
 fn notify_relaxed() {
     let event = Event::new();
 
