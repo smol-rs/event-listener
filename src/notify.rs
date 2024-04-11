@@ -484,7 +484,7 @@ pub trait IntoNotification: __private::Sealed {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{IntoNotification, Event};
+    /// use event_listener::{IntoNotification, Event, Listener};
     ///
     /// let event = Event::<bool>::with_tag();
     ///
@@ -518,7 +518,7 @@ pub trait IntoNotification: __private::Sealed {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{IntoNotification, Event};
+    /// use event_listener::{IntoNotification, Event, Listener};
     ///
     /// let event = Event::<bool>::with_tag();
     ///
