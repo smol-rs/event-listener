@@ -90,6 +90,104 @@ use std::usize;
 mod notify;
 pub use notify::{IntoNotification, Notification};
 
+/// Create a stack-based event listener for an [`Event`].
+///
+/// [`EventListener`] allocates the listener on the heap. While this works for most use cases, in
+/// practice this heap allocation can be expensive for repeated uses. This method allows for
+/// allocating the listener on the stack instead.
+///
+/// There are limitations to using this macro instead of the [`EventListener`] type, however.
+/// Firstly, it is significantly less flexible. The listener is locked to the current stack
+/// frame, meaning that it can't be returned or put into a place where it would go out of
+/// scope. For instance, this will not work:
+///
+/// ```
+/// use event_listener::{Event, Listener, listener};
+///
+/// fn get_listener(event: &Event) -> impl Listener {
+///     listener!(event => cant_return_this);
+///     cant_return_this
+/// }
+/// ```
+///
+/// In addition, the types involved in creating this listener are not able to be named. Therefore
+/// it cannot be used in hand-rolled futures or similar structures.
+///
+/// The type created by this macro implements [`Listener`], allowing it to be used in cases where
+/// [`EventListener`] would normally be used.
+///
+/// ## Example
+///
+/// To use this macro, replace cases where you would normally use this...
+///
+/// ```no_compile
+/// let listener = event.listen();
+/// ```
+///
+/// ...with this:
+///
+/// ```no_compile
+/// listener!(event => listener);
+/// ```
+///
+/// Here is the top level example from this crate's documentation, but using [`listener`] instead
+/// of [`EventListener`].
+///
+/// ```
+/// use std::sync::atomic::{AtomicBool, Ordering};
+/// use std::sync::Arc;
+/// use std::thread;
+/// use std::time::Duration;
+/// use std::usize;
+/// use event_listener::{Event, listener, IntoNotification, Listener};
+///
+/// let flag = Arc::new(AtomicBool::new(false));
+/// let event = Arc::new(Event::new());
+///
+/// // Spawn a thread that will set the flag after 1 second.
+/// thread::spawn({
+///     let flag = flag.clone();
+///     let event = event.clone();
+///     move || {
+///         // Wait for a second.
+///         thread::sleep(Duration::from_secs(1));
+///
+///         // Set the flag.
+///         flag.store(true, Ordering::SeqCst);
+///
+///         // Notify all listeners that the flag has been set.
+///         event.notify(usize::MAX);
+///     }
+/// });
+///
+/// // Wait until the flag is set.
+/// loop {
+///     // Check the flag.
+///     if flag.load(Ordering::SeqCst) {
+///         break;
+///     }
+///
+///     // Start listening for events.
+///     // NEW: Changed to a stack-based listener.
+///     listener!(event => listener);
+///
+///     // Check the flag again after creating the listener.
+///     if flag.load(Ordering::SeqCst) {
+///         break;
+///     }
+///
+///     // Wait for a notification and continue the loop.
+///     listener.wait();
+/// }
+/// ```
+#[macro_export]
+macro_rules! listener {
+    ($event:expr => $listener:ident) => {
+        // TODO: Stack allocation.
+        let mut $listener = ($event).listen();
+    };
+}
+
 /// Inner state of [`Event`].
 struct Inner<T> {
     /// The number of notified entries, or `usize::MAX` if all of them have been notified.
