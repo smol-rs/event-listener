@@ -216,16 +216,8 @@ pub struct TagWith<N: ?Sized, F> {
 #[cfg(feature = "std")]
 impl<N: fmt::Debug, F> fmt::Debug for TagWith<N, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        struct Ellipses;
-
-        impl fmt::Debug for Ellipses {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("..")
-            }
-        }
-
         f.debug_struct("TagWith")
-            .field("tag", &Ellipses)
+            .field("tag", &format_args!(".."))
             .field("inner", &self.inner)
             .finish()
     }
@@ -484,7 +476,7 @@ pub trait IntoNotification: __private::Sealed {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{IntoNotification, Event};
+    /// use event_listener::{IntoNotification, Event, Listener};
     ///
     /// let event = Event::<bool>::with_tag();
     ///
@@ -518,7 +510,7 @@ pub trait IntoNotification: __private::Sealed {
     /// # Examples
     ///
     /// ```
-    /// use event_listener::{IntoNotification, Event};
+    /// use event_listener::{IntoNotification, Event, Listener};
     ///
     /// let event = Event::<bool>::with_tag();
     ///

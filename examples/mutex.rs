@@ -11,7 +11,7 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use event_listener::Event;
+use event_listener::{Event, Listener};
 
 /// A simple mutex.
 struct Mutex<T> {

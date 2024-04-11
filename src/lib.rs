@@ -19,7 +19,7 @@
 //! use std::thread;
 //! use std::time::Duration;
 //! use std::usize;
-//! use event_listener::Event;
+//! use event_listener::{Event, Listener};
 //!
 //! let flag = Arc::new(AtomicBool::new(false));
 //! let event = Arc::new(Event::new());
@@ -109,7 +109,7 @@ impl<T> Inner<T> {
     fn lock(&self) -> ListGuard<'_, T> {
         ListGuard {
             inner: self,
-            guard: self.list.lock().unwrap(),
+            guard: self.list.lock().unwrap_or_else(|e| e.into_inner()),
         }
     }
 
@@ -462,6 +462,117 @@ impl Default for Event {
     }
 }
 
+/// A handle that is listening to an [`Event`].
+///
+/// This trait represents a type waiting for a notification from an [`Event`]. See the
+/// [`EventListener`] type for more documentation on this trait's usage.
+pub trait Listener<T = ()>: Future<Output = T> + __sealed::Sealed {
+    /// Blocks until a notification is received.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::{Event, Listener};
+    ///
+    /// let event = Event::new();
+    /// let mut listener = event.listen();
+    ///
+    /// // Notify `listener`.
+    /// event.notify(1);
+    ///
+    /// // Receive the notification.
+    /// listener.wait();
+    /// ```
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
+    fn wait(self) -> T;
+
+    /// Blocks until a notification is received or a timeout is reached.
+    ///
+    /// Returns `true` if a notification was received.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use event_listener::{Event, Listener};
+    ///
+    /// let event = Event::new();
+    /// let mut listener = event.listen();
+    ///
+    /// // There are no notification so this times out.
+    /// assert!(listener.wait_timeout(Duration::from_secs(1)).is_none());
+    /// ```
+    fn wait_timeout(self, timeout: Duration) -> Option<T>;
+
+    /// Blocks until a notification is received or a deadline is reached.
+    ///
+    /// Returns `true` if a notification was received.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use event_listener::{Event, Listener};
+    ///
+    /// let event = Event::new();
+    /// let mut listener = event.listen();
+    ///
+    /// // There are no notification so this times out.
+    /// assert!(listener.wait_deadline(Instant::now() + Duration::from_secs(1)).is_none());
+    /// ```
+    fn wait_deadline(self, deadline: Instant) -> Option<T>;
+
+    /// Drops this listener and discards its notification (if any) without notifying another
+    /// active listener.
+    ///
+    /// Returns `true` if a notification was discarded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::{Event, Listener};
+    ///
+    /// let event = Event::new();
+    /// let mut listener1 = event.listen();
+    /// let mut listener2 = event.listen();
+    ///
+    /// event.notify(1);
+    ///
+    /// assert!(listener1.discard());
+    /// assert!(!listener2.discard());
+    /// ```
+    fn discard(self) -> bool;
+
+    /// Returns `true` if this listener listens to the given `Event`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::{Event, Listener};
+    ///
+    /// let event = Event::new();
+    /// let listener = event.listen();
+    ///
+    /// assert!(listener.listens_to(&event));
+    /// ```
+    fn listens_to(&self, event: &Event<T>) -> bool;
+
+    /// Returns `true` if both listeners listen to the same `Event`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::{Event, Listener};
+    ///
+    /// let event = Event::new();
+    /// let listener1 = event.listen();
+    /// let listener2 = event.listen();
+    ///
+    /// assert!(listener1.same_event(&listener2));
+    /// ```
+    fn same_event(&self, other: &Self) -> bool;
+}
+
 /// A guard waiting for a notification from an [`Event`].
 ///
 /// There are two ways for a listener to wait for a notification:
@@ -485,87 +596,22 @@ unsafe impl<T: Send> Sync for EventListener<T> {}
 
 impl<T> UnwindSafe for EventListener<T> {}
 impl<T> RefUnwindSafe for EventListener<T> {}
+impl<T> __sealed::Sealed for EventListener<T> {}
 
-impl<T> EventListener<T> {
-    /// Blocks until a notification is received.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use event_listener::Event;
-    ///
-    /// let event = Event::new();
-    /// let listener = event.listen();
-    ///
-    /// // Notify `listener`.
-    /// event.notify(1);
-    ///
-    /// // Receive the notification.
-    /// listener.wait();
-    /// ```
-    pub fn wait(self) -> T {
+impl<T> Listener<T> for EventListener<T> {
+    fn wait(self) -> T {
         self.wait_internal(None).unwrap()
     }
 
-    /// Blocks until a notification is received or a timeout is reached.
-    ///
-    /// Returns `true` if a notification was received.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::time::Duration;
-    /// use event_listener::Event;
-    ///
-    /// let event = Event::new();
-    /// let listener = event.listen();
-    ///
-    /// // There are no notification so this times out.
-    /// assert!(listener.wait_timeout(Duration::from_secs(1)).is_none());
-    /// ```
-    pub fn wait_timeout(self, timeout: Duration) -> Option<T> {
-        self.wait_internal(Some(Instant::now() + timeout))
-    }
-
-    /// Blocks until a notification is received or a deadline is reached.
-    ///
-    /// Returns `true` if a notification was received.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::time::{Duration, Instant};
-    /// use event_listener::Event;
-    ///
-    /// let event = Event::new();
-    /// let listener = event.listen();
-    ///
-    /// // There are no notification so this times out.
-    /// assert!(listener.wait_deadline(Instant::now() + Duration::from_secs(1)).is_none());
-    /// ```
-    pub fn wait_deadline(self, deadline: Instant) -> Option<T> {
+    fn wait_deadline(self, deadline: Instant) -> Option<T> {
         self.wait_internal(Some(deadline))
     }
 
-    /// Drops this listener and discards its notification (if any) without notifying another
-    /// active listener.
-    ///
-    /// Returns `true` if a notification was discarded.
-    ///
-    /// # Examples
-    /// ```
-    /// use event_listener::Event;
-    ///
-    /// let event = Event::new();
-    /// let listener1 = event.listen();
-    /// let listener2 = event.listen();
-    ///
-    /// event.notify(1);
-    ///
-    /// assert!(listener1.discard());
-    /// assert!(!listener2.discard());
-    /// ```
-    pub fn discard(mut self) -> bool {
+    fn wait_timeout(self, timeout: Duration) -> Option<T> {
+        self.wait_internal(Instant::now().checked_add(timeout))
+    }
+
+    fn discard(mut self) -> bool {
         // If this listener has never picked up a notification...
         if let Some(entry) = self.entry.take() {
             let mut list = self.inner.lock();
@@ -577,40 +623,16 @@ impl<T> EventListener<T> {
         false
     }
 
-    /// Returns `true` if this listener listens to the given `Event`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use event_listener::Event;
-    ///
-    /// let event = Event::new();
-    /// let listener = event.listen();
-    ///
-    /// assert!(listener.listens_to(&event));
-    /// ```
-    #[inline]
-    pub fn listens_to(&self, event: &Event<T>) -> bool {
+    fn listens_to(&self, event: &Event<T>) -> bool {
         ptr::eq::<Inner<T>>(&*self.inner, event.inner.load(Ordering::Acquire))
     }
 
-    /// Returns `true` if both listeners listen to the same `Event`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use event_listener::Event;
-    ///
-    /// let event = Event::new();
-    /// let listener1 = event.listen();
-    /// let listener2 = event.listen();
-    ///
-    /// assert!(listener1.same_event(&listener2));
-    /// ```
-    pub fn same_event(&self, other: &EventListener<T>) -> bool {
+    fn same_event(&self, other: &Self) -> bool {
         ptr::eq::<Inner<T>>(&*self.inner, &*other.inner)
     }
+}
 
+impl<T> EventListener<T> {
     fn wait_internal(mut self, deadline: Option<Instant>) -> Option<T> {
         // Take out the entry pointer and set it to `None`.
         let entry = match self.entry.take() {
@@ -1038,4 +1060,9 @@ mod loom {
 
     #[cfg(feature = "portable-atomic")]
     pub(crate) use portable_atomic_util::Arc;
+}
+
+mod __sealed {
+    #[doc(hidden)]
+    pub trait Sealed {}
 }
