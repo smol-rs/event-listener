@@ -96,4 +96,7 @@ fn counter() {
         assert_eq!(block_on(waiter1), 2);
         assert_eq!(block_on(waiter2), 2);
     });
+
+    #[cfg(miri)]
+    thread::sleep(std::time::Duration::from_secs(5));
 }
