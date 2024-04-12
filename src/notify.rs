@@ -613,3 +613,13 @@ mod __private {
     pub trait Sealed {}
     impl<N: super::NotificationPrivate + ?Sized> Sealed for N {}
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[should_panic]
+    fn negative_notification_should_panic() {
+        let event = crate::Event::new();
+        event.notify(-1);
+    }
+}
