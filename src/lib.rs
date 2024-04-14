@@ -87,7 +87,7 @@ use std::ops::{Deref, DerefMut};
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::pin::Pin;
 use std::ptr::{self, NonNull};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, TryLockError};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
@@ -577,7 +577,31 @@ impl<T> Drop for Event<T> {
 
 impl fmt::Debug for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.pad("Event { .. }")
+        let inner = match self.try_inner() {
+            None => return f
+                .debug_tuple("Event")
+                .field(&format_args!("<uninitialized>"))
+                .finish(),
+            Some(inner) => inner
+        };
+
+        let guard = match inner.list.try_lock() {
+            Err(TryLockError::WouldBlock) => {
+                return f
+                    .debug_tuple("Event")
+                    .field(&format_args!("<locked>"))
+                    .finish()
+            }
+
+            Err(TryLockError::Poisoned(err)) => err.into_inner(),
+
+            Ok(lock) => lock,
+        };
+
+        f.debug_struct("Event")
+            .field("listeners_notified", &guard.notified)
+            .field("listeners_total", &guard.len)
+            .finish()
     }
 }
 
