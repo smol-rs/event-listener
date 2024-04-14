@@ -457,6 +457,25 @@ impl<T> Event<T> {
         0
     }
 
+    /// Tell whether any listeners are currently notified.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    /// let listener = event.listen();
+    /// assert!(!event.is_notified());
+    ///
+    /// event.notify(1);
+    /// assert!(event.is_notified());
+    /// ```
+    #[inline]
+    pub fn is_notified(&self) -> bool {
+        self.try_inner().map_or(false, |inner| inner.is_notified())
+    }
+
     /// Returns a reference to the inner state if it was initialized.
     #[inline]
     fn try_inner(&self) -> Option<&Inner<T>> {

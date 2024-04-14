@@ -100,6 +100,28 @@ impl<T> Inner<T> {
         true
     }
 
+    /// Tell whether any listeners are currently notified.
+    #[inline]
+    pub fn is_notified(&self) -> bool {
+        let mut head = self.head.load(Ordering::Acquire);
+
+        loop {
+            if head == 0 {
+                // No entries left.
+                return false;
+            }
+            let slot = self.slots.get(head);
+
+            // If this slot isn't occupied, use the next one.
+            let state = slot.state.load(Ordering::Acquire);
+            if state & OCCUPIED == 0 {
+                head = slot.next.load(Ordering::Acquire);
+            } else {
+                return state & NOTIFIED != 0;
+            }
+        }
+    }
+
     /// Insert a listener into this linked list.
     #[cold]
     pub(crate) fn listen(&self) -> Listener<T> {

@@ -22,12 +22,15 @@ fn notify() {
     let mut l2 = event.listen();
     let mut l3 = event.listen();
 
+    assert!(!event.is_notified());
     assert!(!is_notified(&mut l1));
     assert!(!is_notified(&mut l2));
     assert!(!is_notified(&mut l3));
 
     assert_eq!(event.notify(2), 2);
+    assert!(event.is_notified());
     assert_eq!(event.notify(1), 0);
+    assert!(event.is_notified());
     assert!(is_notified(&mut l1));
     assert!(is_notified(&mut l2));
     assert!(!is_notified(&mut l3));
@@ -41,9 +44,11 @@ fn notify_additional() {
     let mut l2 = event.listen();
     let mut l3 = event.listen();
 
+    assert!(!event.is_notified());
     assert_eq!(event.notify_additional(1), 1);
     assert_eq!(event.notify(1), 0);
     assert_eq!(event.notify_additional(1), 1);
+    assert!(event.is_notified());
 
     assert!(is_notified(&mut l1));
     assert!(is_notified(&mut l2));
@@ -54,6 +59,7 @@ fn notify_additional() {
 fn notify_zero() {
     let event = Event::new();
     assert_eq!(event.notify(1), 0);
+    assert!(!event.is_notified());
 }
 
 #[test]
@@ -119,8 +125,10 @@ fn notify_all() {
 
     assert!(!is_notified(&mut l1));
     assert!(!is_notified(&mut l2));
+    assert!(!event.is_notified());
 
     assert_eq!(event.notify(usize::MAX), 2);
+    assert!(event.is_notified());
     assert!(is_notified(&mut l1));
     assert!(is_notified(&mut l2));
 }

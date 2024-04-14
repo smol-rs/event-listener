@@ -55,6 +55,12 @@ impl<T> Inner<T> {
         self.notified.load(Ordering::Acquire) < limit
     }
 
+    /// Tell if any listeners are currently notified.
+    #[inline]
+    pub(crate) fn is_notified(&self) -> bool {
+        self.notified.load(Ordering::Acquire) > 0
+    }
+
     /// Create a listener for this linked list.
     #[cold]
     pub(crate) fn listen(&self) -> Listener<T> {
