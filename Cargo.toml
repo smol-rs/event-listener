@@ -2,11 +2,11 @@
 name = "event-listener"
 # When publishing a new version:
 # - Update CHANGELOG.md
-# - Create "v2.x.y" git tag
+# - Create "v5.x.y" git tag
 version = "5.3.0"
-authors = ["Stjepan Glavina <stjepang@gmail.com>"]
+authors = ["Stjepan Glavina <stjepang@gmail.com>", "John Nunley <dev@notgull.net>"]
 edition = "2021"
-rust-version = "1.56"
+rust-version = "1.63"
 description = "Notify async tasks or threads"
 license = "Apache-2.0 OR MIT"
 repository = "https://github.com/smol-rs/event-listener"
@@ -21,7 +21,7 @@ portable-atomic = ["portable-atomic-crate", "portable-atomic-util"]
 
 [dependencies]
 portable-atomic-crate = { version = "1.6.0", package = "portable-atomic", optional = true }
-portable-atomic-util = { version = "0.1.5", optional = true }
+portable-atomic-util = { version = "0.1.5", optional = true, features = ["alloc"] }
 
 [dev-dependencies]
 futures = { version = "0.3", default-features = false, features = ["std"] }
@@ -32,6 +32,7 @@ waker-fn = "1"
 [[bench]]
 name = "bench"
 harness = false
+required-features = ["std"]
 
 [lib]
 bench = false

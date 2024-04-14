@@ -1,6 +1,5 @@
 //! The `Notification` trait for specifying notification.
 
-#[cfg(feature = "std")]
 use core::fmt;
 
 use crate::loom::atomic::{self, Ordering};
@@ -161,7 +160,6 @@ where
 }
 
 /// Use a tag to notify listeners.
-#[cfg(feature = "std")]
 #[derive(Debug, Clone)]
 #[doc(hidden)]
 pub struct Tag<N: ?Sized, T> {
@@ -169,7 +167,6 @@ pub struct Tag<N: ?Sized, T> {
     inner: N,
 }
 
-#[cfg(feature = "std")]
 impl<N: ?Sized, T> Tag<N, T> {
     /// Create a new `Tag` with the given tag and notification.
     fn new(tag: T, inner: N) -> Self
@@ -180,7 +177,6 @@ impl<N: ?Sized, T> Tag<N, T> {
     }
 }
 
-#[cfg(feature = "std")]
 impl<N, T> NotificationPrivate for Tag<N, T>
 where
     N: Notification + ?Sized,
@@ -206,14 +202,12 @@ where
 }
 
 /// Use a function to generate a tag to notify listeners.
-#[cfg(feature = "std")]
 #[doc(hidden)]
 pub struct TagWith<N: ?Sized, F> {
     tag: F,
     inner: N,
 }
 
-#[cfg(feature = "std")]
 impl<N: fmt::Debug, F> fmt::Debug for TagWith<N, F> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TagWith")
@@ -223,7 +217,6 @@ impl<N: fmt::Debug, F> fmt::Debug for TagWith<N, F> {
     }
 }
 
-#[cfg(feature = "std")]
 impl<N, F> TagWith<N, F> {
     /// Create a new `TagFn` with the given tag function and notification.
     fn new(tag: F, inner: N) -> Self {
@@ -231,7 +224,6 @@ impl<N, F> TagWith<N, F> {
     }
 }
 
-#[cfg(feature = "std")]
 impl<N, F, T> NotificationPrivate for TagWith<N, F>
 where
     N: Notification + ?Sized,
@@ -490,7 +482,6 @@ pub trait IntoNotification: __private::Sealed {
     /// assert_eq!(listener1.wait(), true);
     /// assert_eq!(listener2.wait(), false);
     /// ```
-    #[cfg(feature = "std")]
     fn tag<T: Clone>(self, tag: T) -> Tag<Self::Notify, T>
     where
         Self: Sized + IntoNotification<Tag = ()>,
@@ -524,7 +515,6 @@ pub trait IntoNotification: __private::Sealed {
     /// assert_eq!(listener1.wait(), true);
     /// assert_eq!(listener2.wait(), false);
     /// ```
-    #[cfg(feature = "std")]
     fn tag_with<T, F>(self, tag: F) -> TagWith<Self::Notify, F>
     where
         Self: Sized + IntoNotification<Tag = ()>,
@@ -568,7 +558,7 @@ impl_for_numeric_types! { usize u8 u16 u32 u64 u128 isize i8 i16 i32 i64 i128 }
 /// Equivalent to `atomic::fence(Ordering::SeqCst)`, but in some cases faster.
 #[inline]
 pub(super) fn full_fence() {
-    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), not(miri), not(loom)))]
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), not(miri)))]
     {
         use core::{arch::asm, cell::UnsafeCell};
         // HACK(stjepang): On x86 architectures there are two different ways of executing

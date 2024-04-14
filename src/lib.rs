@@ -75,8 +75,8 @@
 )]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 
-use loom::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
-use loom::Arc;
+use crate::loom::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
+use crate::loom::Arc;
 use notify::{GenericNotify, Internal, NotificationPrivate};
 
 use std::cell::{Cell, UnsafeCell};
@@ -91,7 +91,6 @@ use std::sync::{Mutex, MutexGuard, TryLockError};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, Thread};
 use std::time::{Duration, Instant};
-use std::usize;
 
 mod notify;
 pub use notify::{IntoNotification, Notification};
@@ -385,24 +384,6 @@ impl Event {
     pub fn notify_additional_relaxed(&self, n: usize) -> usize {
         self.notify(n.additional().relaxed())
     }
-}
-
-impl<T> Event<T> {
-    /// Creates a new [`Event`] with a tag.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use event_listener::Event;
-    ///
-    /// let event = Event::<usize>::with_tag();
-    /// ```
-    #[inline]
-    pub const fn with_tag() -> Event<T> {
-        Event {
-            inner: AtomicPtr::new(ptr::null_mut()),
-        }
-    }
 
     /// Return the listener count by acquiring a lock.
     ///
@@ -430,13 +411,30 @@ impl<T> Event<T> {
     /// drop(listener2);
     /// assert_eq!(event.total_listeners(), 0);        
     /// ```
-    #[cfg(feature = "std")]
     #[inline]
     pub fn total_listeners(&self) -> usize {
         if let Some(inner) = self.try_inner() {
-            inner.total_listeners()
+            inner.lock().len
         } else {
             0
+        }
+    }
+}
+
+impl<T> Event<T> {
+    /// Creates a new [`Event`] with a tag.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::<usize>::with_tag();
+    /// ```
+    #[inline]
+    pub const fn with_tag() -> Event<T> {
+        Event {
+            inner: AtomicPtr::new(ptr::null_mut()),
         }
     }
 
@@ -504,7 +502,7 @@ impl<T> Event<T> {
         if let Some(inner) = self.try_inner() {
             let limit = if notify.is_additional(Internal::new()) {
                 // Notify if there is at least one unnotified listener.
-                std::usize::MAX
+                usize::MAX
             } else {
                 // Notify if there is at least one unnotified listener and the number of notified
                 // listeners is less than `n`.
@@ -535,7 +533,8 @@ impl<T> Event<T> {
     /// ```
     #[inline]
     pub fn is_notified(&self) -> bool {
-        self.try_inner().map_or(false, |inner| inner.notified.load(Ordering::Acquire) > 0)
+        self.try_inner()
+            .map_or(false, |inner| inner.notified.load(Ordering::Acquire) > 0)
     }
 
     /// Returns a reference to the inner state if it was initialized.
@@ -614,11 +613,13 @@ impl<T> Drop for Event<T> {
 impl fmt::Debug for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let inner = match self.try_inner() {
-            None => return f
-                .debug_tuple("Event")
-                .field(&format_args!("<uninitialized>"))
-                .finish(),
-            Some(inner) => inner
+            None => {
+                return f
+                    .debug_tuple("Event")
+                    .field(&format_args!("<uninitialized>"))
+                    .finish()
+            }
+            Some(inner) => inner,
         };
 
         let guard = match inner.list.try_lock() {
