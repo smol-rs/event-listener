@@ -34,6 +34,7 @@ loom = { version = "0.7", optional = true }
 [[bench]]
 name = "bench"
 harness = false
+required-features = ["std"]
 
 [lib]
 bench = false
