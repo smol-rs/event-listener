@@ -1,12 +1,16 @@
 //! Implementation of the linked list using lock-free primitives.
 
 use crate::loom::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use crate::loom::cell::{Cell, UnsafeCell};
 use crate::notify::{GenericNotify, Internal, Notification};
 
-use core::cell::{Cell, UnsafeCell};
+#[cfg(not(loom))]
+use core::hint::spin_loop;
+#[cfg(loom)]
+use loom::hint::spin_loop;
+
 use core::cmp::Reverse;
 use core::fmt;
-use core::hint::spin_loop;
 use core::iter;
 use core::marker::PhantomData;
 use core::mem::{self, MaybeUninit};
@@ -662,14 +666,16 @@ impl<T> Drop for Slots<T> {
     fn drop(&mut self) {
         // Free every bucket.
         for (i, bucket) in self.buckets.iter_mut().enumerate() {
-            let bucket = *bucket.get_mut();
-            if bucket.is_null() {
-                continue;
-            }
+            crate::loom::ptr_with_mut(bucket, |bucket| {
+                let bucket = *bucket;
+                if bucket.is_null() {
+                    return;
+                }
 
-            // Drop the bucket.
-            let size = bucket_index_to_size(i);
-            drop(unsafe { Box::from_raw(slice::from_raw_parts_mut(bucket, size)) });
+                // Drop the bucket.
+                let size = bucket_index_to_size(i);
+                drop(unsafe { Box::from_raw(slice::from_raw_parts_mut(bucket, size)) });
+            });
         }
     }
 }
@@ -737,11 +743,21 @@ impl<T> Lock<T> {
             let _drop = CallOnDrop(|| self.is_locked.store(false, Ordering::Release));
 
             // SAFETY: We have exclusive access.
-            Some(f(unsafe { &mut *self.data.get() }))
+            Some(cell_with_mut(&self.data, |ptr| f(unsafe { &mut *ptr })))
         } else {
             None
         }
     }
+}
+
+#[cfg(not(loom))]
+fn cell_with_mut<T, R>(cell: &UnsafeCell<T>, f: impl FnOnce(*mut T) -> R) -> R {
+    f(cell.get())
+}
+
+#[cfg(loom)]
+fn cell_with_mut<T, R>(cell: &UnsafeCell<T>, f: impl FnOnce(*mut T) -> R) -> R {
+    cell.with_mut(f)
 }
 
 #[inline]

@@ -1,10 +1,10 @@
 //! Implementation of the linked list using standard library mutexes.
 
 use crate::loom::atomic::{AtomicUsize, Ordering};
+use crate::loom::cell::Cell;
 use crate::notify::{GenericNotify, Internal, Notification};
 
 use std::boxed::Box;
-use std::cell::{Cell, UnsafeCell};
 use std::fmt;
 use std::mem;
 use std::ops::{Deref, DerefMut};
@@ -26,7 +26,8 @@ pub(crate) struct Inner<T> {
     list: Mutex<List<T>>,
 
     /// A single cached list entry to avoid allocations on the fast path of the insertion.
-    cache: UnsafeCell<Entry<T>>,
+    // TODO: Add ability to use loom::cell::UnsafeCell
+    cache: std::cell::UnsafeCell<Entry<T>>,
 }
 
 impl<T> Inner<T> {
@@ -42,7 +43,7 @@ impl<T> Inner<T> {
                 notified: 0,
                 cache_used: false,
             }),
-            cache: UnsafeCell::new(Entry {
+            cache: std::cell::UnsafeCell::new(Entry {
                 state: Cell::new(State::Created),
                 prev: Cell::new(None),
                 next: Cell::new(None),
@@ -403,7 +404,7 @@ impl<T> List<T> {
                 entry.as_ref().state.replace(State::Created)
             } else {
                 // Deallocate the entry.
-                Box::from_raw(entry.as_ptr()).state.into_inner()
+                Box::from_raw(entry.as_ptr()).state.replace(State::Created)
             };
 
             // Update the counters.
