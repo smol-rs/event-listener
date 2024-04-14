@@ -787,3 +787,13 @@ mod __sealed {
     #[doc(hidden)]
     pub trait Sealed {}
 }
+
+fn __test_send_and_sync() {
+    fn _assert_send<T: Send>() {}
+    fn _assert_sync<T: Sync>() {}
+
+    _assert_send::<Event<()>>();
+    _assert_sync::<Event<()>>();
+    _assert_send::<EventListener<()>>();
+    _assert_sync::<EventListener<()>>();
+}
