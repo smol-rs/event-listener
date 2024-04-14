@@ -291,6 +291,7 @@ impl<T> Deref for ListGuard<'_, T> {
     type Target = List<T>;
 
     #[inline]
+    #[cfg_attr(coverage, coverage(off))]
     fn deref(&self) -> &List<T> {
         &self.guard
     }

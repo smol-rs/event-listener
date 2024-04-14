@@ -68,6 +68,7 @@
 //!
 //! [`portable-atomic`]: https://crates.io/crates/portable-atomic
 
+#![cfg_attr(coverage, feature(coverage_attribute))]
 #![doc(
     html_favicon_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
 )]
@@ -614,9 +615,9 @@ impl fmt::Debug for Event {
     }
 }
 
-impl Default for Event {
-    fn default() -> Event {
-        Event::new()
+impl<T> Default for Event<T> {
+    fn default() -> Event<T> {
+        Event::with_tag()
     }
 }
 
@@ -891,6 +892,7 @@ mod __sealed {
     pub trait Sealed {}
 }
 
+#[test]
 fn __test_send_and_sync() {
     fn _assert_send<T: Send>() {}
     fn _assert_sync<T: Sync>() {}

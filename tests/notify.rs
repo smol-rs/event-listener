@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::task::Context;
 use std::usize;
 
-use event_listener::{Event, EventListener};
+use event_listener::{Event, EventListener, Listener};
 use waker_fn::waker_fn;
 
 fn is_notified(listener: &mut EventListener) -> bool {
@@ -12,6 +12,20 @@ fn is_notified(listener: &mut EventListener) -> bool {
     Pin::new(listener)
         .poll(&mut Context::from_waker(&waker))
         .is_ready()
+}
+
+#[test]
+fn debug() {
+    let event = Event::new();
+    let fmt = format!("{:?}", &event);
+    assert!(fmt.contains("Event"));
+
+    let listener = event.listen();
+    let fmt = format!("{:?}", &listener);
+    assert!(fmt.contains("EventListener"));
+
+    let fmt = format!("{:?}", &event);
+    assert!(fmt.contains("Event"));
 }
 
 #[test]
@@ -190,6 +204,55 @@ fn drop_non_notified() {
     drop(l3);
     assert!(is_notified(&mut l1));
     assert!(!is_notified(&mut l2));
+}
+
+#[test]
+fn discard() {
+    let event = Event::default();
+
+    let l1 = event.listen();
+    assert!(!l1.discard());
+
+    let l1 = event.listen();
+    event.notify(1);
+    assert!(l1.discard());
+
+    let l1 = event.listen();
+    event.notify_additional(1);
+    assert!(l1.discard());
+
+    let mut l1 = event.listen();
+    event.notify(1);
+    assert!(is_notified(&mut l1));
+    assert!(!l1.discard());
+}
+
+#[test]
+fn same_event() {
+    let e1 = Event::new();
+    let e2 = Event::new();
+
+    let l1 = e1.listen();
+    let l2 = e1.listen();
+    let l3 = e2.listen();
+
+    assert!(l1.listens_to(&e1));
+    assert!(!l1.listens_to(&e2));
+    assert!(l1.same_event(&l2));
+    assert!(!l1.same_event(&l3));
+}
+
+#[test]
+#[should_panic = "cannot poll a completed `EventListener` future"]
+fn poll_twice() {
+    let event = Event::new();
+    let mut l1 = event.listen();
+    event.notify(1);
+
+    assert!(is_notified(&mut l1));
+
+    // Panic here.
+    is_notified(&mut l1);
 }
 
 #[test]
