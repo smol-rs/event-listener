@@ -483,6 +483,25 @@ impl<T> Event<T> {
         0
     }
 
+    /// Tell whether any listeners are currently notified.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    /// let listener = event.listen();
+    /// assert!(!event.is_notified());
+    ///
+    /// event.notify(1);
+    /// assert!(event.is_notified());
+    /// ```
+    #[inline]
+    pub fn is_notified(&self) -> bool {
+        self.try_inner().map_or(false, |inner| inner.notified.load(Ordering::Acquire) > 0)
+    }
+
     /// Returns a reference to the inner state if it was initialized.
     #[inline]
     fn try_inner(&self) -> Option<&Inner<T>> {
@@ -1174,4 +1193,14 @@ mod loom {
 mod __sealed {
     #[doc(hidden)]
     pub trait Sealed {}
+}
+
+fn __test_send_and_sync() {
+    fn _assert_send<T: Send>() {}
+    fn _assert_sync<T: Sync>() {}
+
+    _assert_send::<Event<()>>();
+    _assert_sync::<Event<()>>();
+    _assert_send::<EventListener<()>>();
+    _assert_sync::<EventListener<()>>();
 }
