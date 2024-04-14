@@ -21,7 +21,7 @@ portable-atomic = ["portable-atomic-crate", "portable-atomic-util"]
 
 [dependencies]
 portable-atomic-crate = { version = "1.6.0", package = "portable-atomic", optional = true }
-portable-atomic-util = { version = "0.1.5", optional = true }
+portable-atomic-util = { version = "0.1.5", features = ["alloc"], optional = true }
 
 [dev-dependencies]
 ahash = { version = "0.8.11", default-features = false, features = ["compile-time-rng"] }
