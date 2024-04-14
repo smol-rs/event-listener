@@ -517,6 +517,9 @@ impl<T> Link<T> {
         let old_state = self.state.fetch_or(REGISTERING, Ordering::SeqCst);
         if old_state & NOTIFIED != 0 {
             // poll() somehow missed the notification. Wake the event loop and try again.
+            let _guard = CallOnDrop(|| {
+                self.state.fetch_and(!REGISTERING, Ordering::SeqCst);
+            });
             waker.wake_by_ref();
             return;
         }
@@ -624,7 +627,7 @@ impl<T> Slots<T> {
             }
         };
 
-        unsafe { slice::from_raw_parts_mut(ptr.as_ptr(), size) }
+        unsafe { slice::from_raw_parts(ptr.as_ptr(), size) }
     }
 }
 
@@ -744,6 +747,11 @@ mod tests {
 
     type HashSet<K> = hashbrown::HashSet<K, ahash::RandomState>;
 
+    #[cfg(not(miri))]
+    const MAX: usize = 0xFFFF;
+    #[cfg(miri)]
+    const MAX: usize = 0xFF;
+
     #[test]
     fn lock() {
         let lock = Lock::new(());
@@ -760,8 +768,7 @@ mod tests {
         let mut seen_ptrs: HashSet<usize> = HashSet::with_hasher(ahash::RandomState::default());
 
         // Don't exhaust our memory; only do this many.
-        let count = 0xFFFF;
-        for i in 1..count {
+        for i in 1..MAX {
             let not_yet_seen = seen_ptrs.insert(slots.get(i) as *const Link<()> as usize);
             assert!(not_yet_seen);
         }
@@ -772,7 +779,7 @@ mod tests {
         let index = Indexes::new();
         let mut last = 0;
 
-        for _ in 0..0xFFFF {
+        for _ in 0..MAX {
             let val = index.alloc();
             assert_eq!(val, last + 1);
             last = val;
