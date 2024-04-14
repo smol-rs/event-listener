@@ -24,6 +24,8 @@ portable-atomic-crate = { version = "1.6.0", package = "portable-atomic", option
 portable-atomic-util = { version = "0.1.5", optional = true }
 
 [dev-dependencies]
+ahash = { version = "0.8.11", default-features = false, features = ["compile-time-rng"] }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 futures-lite = "2.3.0"
+hashbrown = { version = "0.14.3", default-features = false }
 waker-fn = "1"

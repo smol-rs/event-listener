@@ -1,5 +1,7 @@
 //! Tests relating to tagging.
 
+#![cfg(feature = "std")]
+
 use std::future::Future;
 use std::panic;
 use std::pin::Pin;

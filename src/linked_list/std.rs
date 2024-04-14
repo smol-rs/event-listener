@@ -2,15 +2,15 @@
 
 use crate::loom::atomic::{AtomicUsize, Ordering};
 use crate::notify::{GenericNotify, Internal, Notification};
-use crate::State;
 
+use std::boxed::Box;
 use std::cell::{Cell, UnsafeCell};
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self, NonNull};
 use std::sync::{Mutex, MutexGuard};
-use std::task::{Context, Poll};
-use std::thread;
+use std::task::{Context, Poll, Waker};
+use std::thread::{self, Thread};
 use std::time::Instant;
 use std::usize;
 
@@ -424,6 +424,47 @@ impl<T> List<T> {
         }
 
         count - n
+    }
+}
+
+/// The state of a listener.
+enum State<T> {
+    /// It has just been created.
+    Created,
+
+    /// It has received a notification.
+    Notified {
+        /// This is `true` if this was an "additional" notification.
+        additional: bool,
+
+        /// The tag associated with this event.
+        tag: Option<T>,
+    },
+
+    /// An async task is polling it.
+    Polling(Waker),
+
+    /// A thread is blocked on it.
+    Waiting(Thread),
+}
+
+impl<T> State<T> {
+    /// Returns `true` if this is the `Notified` state.
+    #[inline]
+    fn is_notified(&self) -> bool {
+        match self {
+            State::Notified { .. } => true,
+            State::Created | State::Polling(_) | State::Waiting(_) => false,
+        }
+    }
+
+    /// Take the tag out if it exists.
+    #[inline]
+    fn take(&mut self) -> Option<T> {
+        match self {
+            State::Notified { tag, .. } => Some(tag.take().expect("tag taken twice")),
+            _ => None,
+        }
     }
 }
 

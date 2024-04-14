@@ -1,5 +1,7 @@
 //! Test the wait() family of methods.
 
+#![cfg(feature = "std")]
+
 use event_listener::{Event, IntoNotification, Listener};
 use std::time::{Duration, Instant};
 

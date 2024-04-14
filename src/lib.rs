@@ -13,7 +13,8 @@
 //!
 //! Wait until another thread sets a boolean flag:
 //!
-//! ```
+#![cfg_attr(feature = "std", doc = "```")]
+#![cfg_attr(not(feature = "std"), doc = "```no_compile")]
 //! use std::sync::atomic::{AtomicBool, Ordering};
 //! use std::sync::Arc;
 //! use std::thread;
@@ -67,22 +68,29 @@
 //!
 //! [`portable-atomic`]: https://crates.io/crates/portable-atomic
 
+#![no_std]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
+
+extern crate alloc;
+
+#[cfg(feature = "std")]
+extern crate std;
 
 use loom::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
 use loom::Arc;
 use notify::{Internal, NotificationPrivate};
 
-use std::fmt;
-use std::future::Future;
-use std::mem::ManuallyDrop;
-use std::panic::{RefUnwindSafe, UnwindSafe};
-use std::pin::Pin;
-use std::ptr;
-use std::task::{Context, Poll, Waker};
-use std::thread::Thread;
+use core::fmt;
+use core::future::Future;
+use core::mem::ManuallyDrop;
+use core::panic::{RefUnwindSafe, UnwindSafe};
+use core::pin::Pin;
+use core::ptr;
+use core::task::{Context, Poll};
+use core::usize;
+
+#[cfg(all(feature = "std", not(target_family = "wasm")))]
 use std::time::{Duration, Instant};
-use std::usize;
 
 mod linked_list;
 mod notify;
@@ -133,7 +141,8 @@ pub use notify::{IntoNotification, Notification};
 /// Here is the top level example from this crate's documentation, but using [`listener`] instead
 /// of [`EventListener`].
 ///
-/// ```
+#[cfg_attr(feature = "std", doc = "```")]
+#[cfg_attr(not(feature = "std"), doc = "```no_compile")]
 /// use std::sync::atomic::{AtomicBool, Ordering};
 /// use std::sync::Arc;
 /// use std::thread;
@@ -432,7 +441,7 @@ impl<T> Event<T> {
         if let Some(inner) = self.try_inner() {
             let limit = if notify.is_additional(Internal::new()) {
                 // Notify if there is at least one unnotified listener.
-                std::usize::MAX
+                usize::MAX
             } else {
                 // Notify if there is at least one unnotified listener and the number of notified
                 // listeners is less than `n`.
@@ -557,6 +566,7 @@ pub trait Listener<T = ()>: Future<Output = T> + __sealed::Sealed {
     /// // There are no notification so this times out.
     /// assert!(listener.wait_timeout(Duration::from_secs(1)).is_none());
     /// ```
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
     fn wait_timeout(self, timeout: Duration) -> Option<T>;
 
     /// Blocks until a notification is received or a deadline is reached.
@@ -575,6 +585,7 @@ pub trait Listener<T = ()>: Future<Output = T> + __sealed::Sealed {
     /// // There are no notification so this times out.
     /// assert!(listener.wait_deadline(Instant::now() + Duration::from_secs(1)).is_none());
     /// ```
+    #[cfg(all(feature = "std", not(target_family = "wasm")))]
     fn wait_deadline(self, deadline: Instant) -> Option<T>;
 
     /// Drops this listener and discards its notification (if any) without notifying another
@@ -654,14 +665,17 @@ impl<T> RefUnwindSafe for EventListener<T> {}
 impl<T> __sealed::Sealed for EventListener<T> {}
 
 impl<T> Listener<T> for EventListener<T> {
+    #[cfg(feature = "std")]
     fn wait(self) -> T {
         self.wait_internal(None).unwrap()
     }
 
+    #[cfg(feature = "std")]
     fn wait_deadline(self, deadline: Instant) -> Option<T> {
         self.wait_internal(Some(deadline))
     }
 
+    #[cfg(feature = "std")]
     fn wait_timeout(self, timeout: Duration) -> Option<T> {
         self.wait_internal(Instant::now().checked_add(timeout))
     }
@@ -680,6 +694,7 @@ impl<T> Listener<T> for EventListener<T> {
 }
 
 impl<T> EventListener<T> {
+    #[cfg(feature = "std")]
     fn wait_internal(mut self, deadline: Option<Instant>) -> Option<T> {
         self.inner.wait(&mut self.listener, deadline)
     }
@@ -703,47 +718,6 @@ impl<T> Future for EventListener<T> {
 impl<T> Drop for EventListener<T> {
     fn drop(&mut self) {
         self.inner.remove(&mut self.listener);
-    }
-}
-
-/// The state of a listener.
-enum State<T> {
-    /// It has just been created.
-    Created,
-
-    /// It has received a notification.
-    Notified {
-        /// This is `true` if this was an "additional" notification.
-        additional: bool,
-
-        /// The tag associated with this event.
-        tag: Option<T>,
-    },
-
-    /// An async task is polling it.
-    Polling(Waker),
-
-    /// A thread is blocked on it.
-    Waiting(Thread),
-}
-
-impl<T> State<T> {
-    /// Returns `true` if this is the `Notified` state.
-    #[inline]
-    fn is_notified(&self) -> bool {
-        match self {
-            State::Notified { .. } => true,
-            State::Created | State::Polling(_) | State::Waiting(_) => false,
-        }
-    }
-
-    /// Take the tag out if it exists.
-    #[inline]
-    fn take(&mut self) -> Option<T> {
-        match self {
-            State::Notified { tag, .. } => Some(tag.take().expect("tag taken twice")),
-            _ => None,
-        }
     }
 }
 
@@ -777,10 +751,10 @@ fn full_fence() {
 
 mod loom {
     #[cfg(not(feature = "portable-atomic"))]
-    pub(crate) use std::sync::atomic;
+    pub(crate) use core::sync::atomic;
 
     #[cfg(not(feature = "portable-atomic"))]
-    pub(crate) use std::sync::Arc;
+    pub(crate) use alloc::sync::Arc;
 
     #[cfg(feature = "portable-atomic")]
     pub(crate) use portable_atomic_crate as atomic;
