@@ -84,6 +84,12 @@ impl<T> Inner<T> {
         self.notified.load(Ordering::Acquire) > 0
     }
 
+    /// Get the total number of listeners.
+    #[inline]
+    pub(crate) fn total_listeners(&self) -> usize {
+        self.lock().guard.len
+    }
+
     /// Create a listener for this linked list.
     #[cold]
     pub(crate) fn listen(&self) -> Listener<T> {

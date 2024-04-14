@@ -384,6 +384,42 @@ impl<T> Event<T> {
         }
     }
 
+    /// Return the listener count by acquiring a lock.
+    ///
+    /// This is just a snapshot of the number of listeners at this point in time.
+    /// It is possible for the actual number to change at any point.
+    /// The number should only ever be used as a hint.
+    /// This is only available when `std` feature is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    ///
+    /// assert_eq!(event.total_listeners(), 0);
+    ///
+    /// let listener1 = event.listen();
+    /// assert_eq!(event.total_listeners(), 1);    
+    ///
+    /// let listener2 = event.listen();
+    /// assert_eq!(event.total_listeners(), 2);        
+    ///
+    /// drop(listener1);
+    /// drop(listener2);
+    /// assert_eq!(event.total_listeners(), 0);        
+    /// ```
+    #[cfg(feature = "std")]
+    #[inline]
+    pub fn total_listeners(&self) -> usize {
+        if let Some(inner) = self.try_inner() {
+            inner.total_listeners()
+        } else {
+            0
+        }
+    }
+
     /// Returns a guard listening for a notification.
     ///
     /// This method emits a `SeqCst` fence after registering a listener.
