@@ -5,10 +5,11 @@ use crate::notify::{GenericNotify, Internal, Notification};
 
 use std::boxed::Box;
 use std::cell::{Cell, UnsafeCell};
+use std::fmt;
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self, NonNull};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, TryLockError};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, Thread};
 use std::time::Instant;
@@ -47,6 +48,28 @@ impl<T> Inner<T> {
                 next: Cell::new(None),
             }),
         }
+    }
+
+    /// Debug output.
+    #[inline]
+    pub(crate) fn debug_fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let guard = match self.list.try_lock() {
+            Err(TryLockError::WouldBlock) => {
+                return f
+                    .debug_tuple("Event")
+                    .field(&format_args!("<locked>"))
+                    .finish()
+            }
+
+            Err(TryLockError::Poisoned(err)) => err.into_inner(),
+
+            Ok(lock) => lock,
+        };
+
+        f.debug_struct("Event")
+            .field("listeners_notified", &guard.notified)
+            .field("listeners_total", &guard.len)
+            .finish()
     }
 
     /// Tell whether there is enough room to notify this list.

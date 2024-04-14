@@ -542,7 +542,13 @@ impl<T> Drop for Event<T> {
 
 impl fmt::Debug for Event {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.pad("Event { .. }")
+        match self.try_inner() {
+            None => f
+                .debug_tuple("Event")
+                .field(&format_args!("<uninitialized>"))
+                .finish(),
+            Some(inner) => inner.debug_fmt(f),
+        }
     }
 }
 

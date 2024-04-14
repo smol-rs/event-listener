@@ -5,6 +5,7 @@ use crate::notify::{GenericNotify, Internal, Notification};
 
 use core::cell::{Cell, UnsafeCell};
 use core::cmp::Reverse;
+use core::fmt;
 use core::hint::spin_loop;
 use core::iter;
 use core::marker::PhantomData;
@@ -93,6 +94,12 @@ impl<T> Inner<T> {
             standard_notify: AtomicUsize::new(0),
             additional_notify: AtomicUsize::new(0),
         }
+    }
+
+    /// Debug output.
+    #[inline]
+    pub(crate) fn debug_fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Event").finish_non_exhaustive()
     }
 
     /// We never have enough info to tell this for sure.
