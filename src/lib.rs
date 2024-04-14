@@ -71,6 +71,7 @@
 #![no_std]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 
+#[cfg(any(not(feature = "std"), not(feature = "portable-atomic")))]
 extern crate alloc;
 
 #[cfg(feature = "std")]
