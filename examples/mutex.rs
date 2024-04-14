@@ -92,9 +92,7 @@ mod ex {
                     }
                     Some(l) => {
                         // Wait until a notification is received.
-                        if l.wait_deadline(deadline).is_none() {
-                            return None;
-                        }
+                        l.wait_deadline(deadline)?;
                     }
                 }
             }

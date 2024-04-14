@@ -371,6 +371,7 @@ impl<T> Event<T> {
     ///
     /// let event = Event::<usize>::with_tag();
     /// ```
+    #[cfg(not(feature = "std"))]
     #[inline]
     pub const fn with_tag() -> Event<T> {
         Event {

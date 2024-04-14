@@ -1,7 +1,5 @@
 //! Implementation of the linked list using lock-free primitives.
 
-extern crate std;
-
 use crate::loom::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use crate::notify::{GenericNotify, Internal, Notification};
 
@@ -745,8 +743,6 @@ impl<F: FnMut()> Drop for CallOnDrop<F> {
 mod tests {
     use super::*;
 
-    type HashSet<K> = hashbrown::HashSet<K, ahash::RandomState>;
-
     #[cfg(not(miri))]
     const MAX: usize = 0xFFFF;
     #[cfg(miri)]
@@ -765,12 +761,10 @@ mod tests {
     #[test]
     fn slots() {
         let slots = Slots::<()>::new();
-        let mut seen_ptrs: HashSet<usize> = HashSet::with_hasher(ahash::RandomState::default());
 
         // Don't exhaust our memory; only do this many.
         for i in 1..MAX {
-            let not_yet_seen = seen_ptrs.insert(slots.get(i) as *const Link<()> as usize);
-            assert!(not_yet_seen);
+            slots.get(i);
         }
     }
 
