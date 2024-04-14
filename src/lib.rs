@@ -67,6 +67,12 @@
 //!
 //! [`portable-atomic`]: https://crates.io/crates/portable-atomic
 
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
+)]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 
 use loom::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
@@ -583,7 +589,6 @@ pub trait Listener<T = ()>: Future<Output = T> + __sealed::Sealed {
     /// // Receive the notification.
     /// listener.wait();
     /// ```
-    #[cfg(all(feature = "std", not(target_family = "wasm")))]
     fn wait(self) -> T;
 
     /// Blocks until a notification is received or a timeout is reached.
