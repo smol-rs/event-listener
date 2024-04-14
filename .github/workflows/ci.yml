@@ -50,7 +50,7 @@ jobs:
       matrix:
         # When updating this, the reminder to update the minimum supported
         # Rust version in Cargo.toml.
-        rust: ['1.56']
+        rust: ['1.59']
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
