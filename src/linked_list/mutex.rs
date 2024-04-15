@@ -1,10 +1,9 @@
 //! Implementation of the linked list using standard library mutexes.
 
-use crate::loom::atomic::{AtomicUsize, Ordering};
-use crate::loom::cell::Cell;
 use crate::notify::{GenericNotify, Internal, Notification};
-
+use crate::sync::atomic::{AtomicUsize, Ordering};
 use std::boxed::Box;
+use std::cell::{Cell, UnsafeCell};
 use std::fmt;
 use std::mem;
 use std::ops::{Deref, DerefMut};
@@ -13,7 +12,6 @@ use std::sync::{Mutex, MutexGuard, TryLockError};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, Thread};
 use std::time::Instant;
-use std::usize;
 
 /// Inner state of [`Event`].
 pub(crate) struct Inner<T> {
@@ -26,8 +24,7 @@ pub(crate) struct Inner<T> {
     list: Mutex<List<T>>,
 
     /// A single cached list entry to avoid allocations on the fast path of the insertion.
-    // TODO: Add ability to use loom::cell::UnsafeCell
-    cache: std::cell::UnsafeCell<Entry<T>>,
+    cache: UnsafeCell<Entry<T>>,
 }
 
 impl<T> Inner<T> {
@@ -35,7 +32,7 @@ impl<T> Inner<T> {
     pub(crate) fn new() -> Self {
         Inner {
             notified: AtomicUsize::new(usize::MAX),
-            list: std::sync::Mutex::new(List::<T> {
+            list: Mutex::new(List::<T> {
                 head: None,
                 tail: None,
                 start: None,
@@ -43,7 +40,7 @@ impl<T> Inner<T> {
                 notified: 0,
                 cache_used: false,
             }),
-            cache: std::cell::UnsafeCell::new(Entry {
+            cache: UnsafeCell::new(Entry {
                 state: Cell::new(State::Created),
                 prev: Cell::new(None),
                 next: Cell::new(None),

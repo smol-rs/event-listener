@@ -28,9 +28,6 @@ futures-lite = "2.3.0"
 criterion = { version = "0.3.4", default-features = false, features = ["cargo_bench_support"] }
 waker-fn = "1"
 
-[target.'cfg(loom)'.dependencies]
-loom = { version = "0.7", optional = true }
-
 [[bench]]
 name = "bench"
 harness = false

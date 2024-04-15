@@ -78,17 +78,11 @@
 #![no_std]
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 
-#[cfg(all(
-    not(all(feature = "std", loom)),
-    any(not(feature = "std"), not(feature = "portable-atomic"))
-))]
+#[cfg(any(not(feature = "std"), not(feature = "portable-atomic")))]
 extern crate alloc;
 
+#[cfg(feature = "std")]
 extern crate std;
-
-use loom::atomic::{self, AtomicPtr, AtomicUsize, Ordering};
-use loom::Arc;
-use notify::{Internal, NotificationPrivate};
 
 use core::fmt;
 use core::future::Future;
@@ -98,6 +92,10 @@ use core::pin::Pin;
 use core::ptr;
 use core::task::{Context, Poll};
 use core::usize;
+use notify::{Internal, NotificationPrivate};
+
+use crate::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use crate::sync::Arc;
 
 #[cfg(all(feature = "std", not(target_family = "wasm")))]
 use std::time::{Duration, Instant};
@@ -107,22 +105,6 @@ mod notify;
 
 pub(crate) use linked_list::Inner;
 pub use notify::{IntoNotification, Notification};
-
-/// Make the given function const if the given condition is true.
-macro_rules! const_fn {
-    (
-        const_if: #[cfg($($cfg:tt)+)];
-        $(#[$($attr:tt)*])*
-        $vis:vis const fn $($rest:tt)*
-    ) => {
-        #[cfg($($cfg)+)]
-        $(#[$($attr)*])*
-        $vis const fn $($rest)*
-        #[cfg(not($($cfg)+))]
-        $(#[$($attr)*])*
-        $vis fn $($rest)*
-    };
-}
 
 /// Create a stack-based event listener for an [`Event`].
 ///
@@ -258,21 +240,18 @@ impl<T> UnwindSafe for Event<T> {}
 impl<T> RefUnwindSafe for Event<T> {}
 
 impl Event {
-    const_fn! {
-        const_if: #[cfg(not(loom))];
-        /// Creates a new [`Event`].
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use event_listener::Event;
-        ///
-        /// let event = Event::new();
-        /// ```
-        #[inline]
-        pub const fn new() -> Event {
-            Self::with_tag()
-        }
+    /// Creates a new [`Event`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::new();
+    /// ```
+    #[inline]
+    pub const fn new() -> Event {
+        Self::with_tag()
     }
 
     /// Notifies a number of active listeners without emitting a `SeqCst` fence.
@@ -390,22 +369,19 @@ impl Event {
 }
 
 impl<T> Event<T> {
-    const_fn! {
-        const_if: #[cfg(not(loom))];
-        /// Creates a new [`Event`] with a tag.
-        ///
-        /// # Examples
-        ///
-        /// ```
-        /// use event_listener::Event;
-        ///
-        /// let event = Event::<usize>::with_tag();
-        /// ```
-        #[inline]
-        pub const fn with_tag() -> Event<T> {
-            Event {
-                inner: AtomicPtr::new(ptr::null_mut()),
-            }
+    /// Creates a new [`Event`] with a tag.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::Event;
+    ///
+    /// let event = Event::<usize>::with_tag();
+    /// ```
+    #[inline]
+    pub const fn with_tag() -> Event<T> {
+        Event {
+            inner: AtomicPtr::new(ptr::null_mut()),
         }
     }
 
@@ -590,16 +566,13 @@ impl<T> Event<T> {
 impl<T> Drop for Event<T> {
     #[inline]
     fn drop(&mut self) {
-        loom::ptr_with_mut(&mut self.inner, |inner| {
-            let inner: *mut Inner<T> = *inner;
-
-            // If the state pointer has been initialized, deallocate it.
-            if !inner.is_null() {
-                unsafe {
-                    drop(Arc::from_raw(inner));
-                }
+        let inner = self.inner.get_mut();
+        // If the state pointer has been initialized, deallocate it.
+        if !inner.is_null() {
+            unsafe {
+                drop(Arc::from_raw(*inner));
             }
-        });
+        }
     }
 }
 
@@ -835,19 +808,16 @@ fn full_fence() {
         // The ideal solution here would be to use inline assembly, but we're instead creating a
         // temporary atomic variable and compare-and-exchanging its value. No sane compiler to
         // x86 platforms is going to optimize this away.
-        atomic::compiler_fence(Ordering::SeqCst);
+        sync::atomic::compiler_fence(Ordering::SeqCst);
         let a = AtomicUsize::new(0);
         let _ = a.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst);
-        atomic::compiler_fence(Ordering::SeqCst);
+        sync::atomic::compiler_fence(Ordering::SeqCst);
     } else {
-        atomic::fence(Ordering::SeqCst);
+        sync::atomic::fence(Ordering::SeqCst);
     }
 }
 
-#[cfg(not(loom))]
-mod loom {
-    pub(crate) use core::cell;
-
+pub(crate) mod sync {
     #[cfg(not(feature = "portable-atomic"))]
     pub(crate) use core::sync::atomic;
 
@@ -859,32 +829,6 @@ mod loom {
 
     #[cfg(feature = "portable-atomic")]
     pub(crate) use portable_atomic_util::Arc;
-
-    /// Equivalent to `loom::AtomicPtr::with_mut`
-    pub(crate) fn ptr_with_mut<T, R>(
-        ptr: &mut atomic::AtomicPtr<T>,
-        f: impl FnOnce(&mut *mut T) -> R,
-    ) -> R {
-        f(ptr.get_mut())
-    }
-}
-
-#[cfg(loom)]
-mod loom {
-    pub(crate) use loom::cell;
-    pub(crate) use loom::sync::Arc;
-
-    pub(crate) mod atomic {
-        pub(crate) use core::sync::atomic::compiler_fence;
-        pub(crate) use loom::sync::atomic::*;
-    }
-
-    pub(crate) fn ptr_with_mut<T, R>(
-        ptr: &mut atomic::AtomicPtr<T>,
-        f: impl FnOnce(&mut *mut T) -> R,
-    ) -> R {
-        ptr.with_mut(f)
-    }
 }
 
 mod __sealed {

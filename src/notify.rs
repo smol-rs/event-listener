@@ -3,7 +3,7 @@
 #[cfg(feature = "std")]
 use core::fmt;
 
-use crate::loom::atomic::{self, Ordering};
+use crate::sync::atomic::{self, Ordering};
 
 pub(crate) use __private::Internal;
 
@@ -568,7 +568,7 @@ impl_for_numeric_types! { usize u8 u16 u32 u64 u128 isize i8 i16 i32 i64 i128 }
 /// Equivalent to `atomic::fence(Ordering::SeqCst)`, but in some cases faster.
 #[inline]
 pub(super) fn full_fence() {
-    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), not(miri), not(loom)))]
+    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), not(miri)))]
     {
         use core::{arch::asm, cell::UnsafeCell};
         // HACK(stjepang): On x86 architectures there are two different ways of executing
