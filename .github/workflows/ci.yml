@@ -13,6 +13,7 @@ on:
 
 env:
   CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
   CARGO_NET_RETRY: 10
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -26,47 +27,85 @@ defaults:
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        rust: [nightly, beta, stable]
+        include:
+          - rust: stable
+          - rust: beta
+          - rust: nightly
+          - rust: nightly
+            target: i686-unknown-linux-gnu
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
+      - name: Install cross-compilation tools
+        uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: ${{ matrix.target }}
+        if: matrix.target != ''
       - run: cargo build --all --all-features --all-targets
+      - run: cargo test --all
+      - run: cargo test --all --release
+      - run: cargo test --no-default-features --tests
+      - run: cargo test --no-default-features --tests --release
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+      - run: rustup target add thumbv7m-none-eabi
       - name: Run cargo check (without dev-dependencies to catch missing feature flags)
-        if: startsWith(matrix.rust, 'nightly')
-        run: cargo check -Z features=dev_dep
-      - run: cargo test
+        run: cargo hack build --all --no-dev-deps
+      - run: cargo hack build --all --target thumbv7m-none-eabi --no-default-features --no-dev-deps
+      - run: cargo hack build --target thumbv7m-none-eabi --no-default-features --no-dev-deps --features portable-atomic
+      - name: Install wasm-pack
+        uses: taiki-e/install-action@wasm-pack
+      - run: wasm-pack test --node
+      - run: wasm-pack test --node --no-default-features
+      - run: wasm-pack test --node --no-default-features --features portable-atomic
+      - name: Clone some dependent crates
+        run: |
+          git clone https://github.com/smol-rs/event-listener-strategy.git
+          git clone https://github.com/smol-rs/async-channel.git
+          git clone https://github.com/smol-rs/async-lock.git
+      - name: Patch dependent crates
+        run: |
+          echo '[patch.crates-io]' >> event-listener-strategy/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> event-listener-strategy/Cargo.toml
+          echo '[patch.crates-io]' >> async-channel/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> async-channel/Cargo.toml
+          echo 'event-listener-strategy = { path = "../event-listener-strategy" }' >> async-channel/Cargo.toml
+          echo '[patch.crates-io]' >> async-lock/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> async-lock/Cargo.toml
+          echo 'event-listener-strategy = { path = "../event-listener-strategy" }' >> async-lock/Cargo.toml
+          echo 'async-channel = { path = "../async-channel" }' >> async-lock/Cargo.toml
+      - name: Test dependent crates
+        run: |
+           cargo test --manifest-path=event-listener-strategy/Cargo.toml
+           cargo test --manifest-path=async-channel/Cargo.toml
+           cargo test --manifest-path=async-lock/Cargo.toml
 
   msrv:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # When updating this, the reminder to update the minimum supported
-        # Rust version in Cargo.toml and .clippy.toml.
-        rust: ['1.36']
     steps:
-      - uses: actions/checkout@v3
-      - name: Install Rust
-        run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
-      - run: cargo build
+      - uses: actions/checkout@v4
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@cargo-hack
+      - run: cargo hack build --all --rust-version
+      - run: cargo hack build --all --no-default-features --rust-version
 
   clippy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: rustup update stable
-      - run: cargo clippy --all-features --all-targets
+      - run: cargo clippy --all --all-features --all-targets
 
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: rustup update stable
       - run: cargo fmt --all --check
@@ -74,13 +113,37 @@ jobs:
   miri:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: rustup toolchain install nightly --component miri && rustup default nightly
-      - run: cargo miri test
-        env:
-          MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation
-          RUSTFLAGS: ${{ env.RUSTFLAGS }} -Z randomize-layout
+      - run: |
+          echo "MIRIFLAGS=-Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation" >>"${GITHUB_ENV}"
+          echo "RUSTFLAGS=${RUSTFLAGS} -Z randomize-layout" >>"${GITHUB_ENV}"
+      - run: cargo miri test --all
+      - run: cargo miri test --no-default-features --tests
+      - run: cargo miri test --no-default-features --features portable-atomic --tests
+      - name: Clone some dependent crates
+        run: |
+          git clone https://github.com/smol-rs/event-listener-strategy.git
+          git clone https://github.com/smol-rs/async-channel.git
+          git clone https://github.com/smol-rs/async-lock.git
+      - name: Patch dependent crates
+        run: |
+          echo '[patch.crates-io]' >> event-listener-strategy/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> event-listener-strategy/Cargo.toml
+          echo '[patch.crates-io]' >> async-channel/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> async-channel/Cargo.toml
+          echo 'event-listener-strategy = { path = "../event-listener-strategy" }' >> async-channel/Cargo.toml
+          echo '[patch.crates-io]' >> async-lock/Cargo.toml
+          echo 'event-listener = { path = ".." }' >> async-lock/Cargo.toml
+          echo 'event-listener-strategy = { path = "../event-listener-strategy" }' >> async-lock/Cargo.toml
+          echo 'async-channel = { path = "../async-channel" }' >> async-lock/Cargo.toml
+      - name: Test dependent crates
+        # async-channel isn't included here as it appears to be broken on MIRI.
+        # See https://github.com/smol-rs/async-channel/issues/85
+        run: |
+           cargo miri test --manifest-path=event-listener-strategy/Cargo.toml
+           cargo miri test --manifest-path=async-lock/Cargo.toml
 
   security_audit:
     permissions:
@@ -89,8 +152,19 @@ jobs:
       issues: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       # https://github.com/rustsec/audit-check/issues/2
       - uses: rustsec/audit-check@master
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  loom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup update stable
+      - name: Loom tests
+        run: RUSTFLAGS="--cfg=loom" cargo test --release --test loom --features loom  
+        
+    
