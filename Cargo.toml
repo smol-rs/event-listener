@@ -17,7 +17,11 @@ exclude = ["/.*"]
 [features]
 default = ["std"]
 std = ["concurrent-queue/std", "parking"]
-portable-atomic = ["portable-atomic-util", "portable_atomic_crate"]
+portable-atomic = [
+  "portable-atomic-util",
+  "portable_atomic_crate",
+  "concurrent-queue/portable-atomic",
+]
 loom = ["concurrent-queue/loom", "parking?/loom", "dep:loom"]
 
 [lints.rust]
