@@ -2,7 +2,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::Context;
-use std::usize;
 
 use event_listener::{Event, EventListener};
 use waker_fn::waker_fn;

@@ -68,6 +68,7 @@
 //! [`portable-atomic`]: https://crates.io/crates/portable-atomic
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![allow(clippy::multiple_bound_locations)] // This is a WONTFIX issue with pin-project-lite
 #![warn(missing_docs, missing_debug_implementations, rust_2018_idioms)]
 #![doc(
     html_favicon_url = "https://raw.githubusercontent.com/smol-rs/smol/master/assets/images/logo_fullsize_transparent.png"
@@ -131,7 +132,7 @@ struct Inner<T> {
 impl<T> Inner<T> {
     fn new() -> Self {
         Self {
-            notified: AtomicUsize::new(core::usize::MAX),
+            notified: AtomicUsize::new(usize::MAX),
             list: sys::List::new(),
         }
     }
@@ -438,7 +439,7 @@ impl<T> Event<T> {
 
         if let Some(inner) = self.try_inner() {
             let limit = if notify.is_additional(Internal::new()) {
-                core::usize::MAX
+                usize::MAX
             } else {
                 notify.count(Internal::new())
             };
