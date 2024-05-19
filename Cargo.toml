@@ -20,6 +20,9 @@ std = ["concurrent-queue/std", "parking"]
 portable-atomic = ["portable-atomic-util", "portable_atomic_crate"]
 loom = ["concurrent-queue/loom", "parking?/loom", "dep:loom"]
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
+
 [dependencies]
 concurrent-queue = { version = "2.4.0", default-features = false }
 pin-project-lite = "0.2.12"
