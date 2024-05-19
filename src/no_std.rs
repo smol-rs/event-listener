@@ -307,7 +307,7 @@ impl<T> Drop for ListGuard<'_, T> {
             let notified = if list.notified < list.len {
                 list.notified
             } else {
-                core::usize::MAX
+                usize::MAX
             };
 
             self.inner.notified.store(notified, Ordering::Release);
