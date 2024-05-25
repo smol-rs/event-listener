@@ -7,6 +7,7 @@ use futures_lite::{future, prelude::*, ready};
 
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+#[cfg(not(target_family = "wasm"))]
 use std::sync::Arc;
 use std::task::Poll;
 
