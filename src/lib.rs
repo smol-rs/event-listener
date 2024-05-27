@@ -1097,7 +1097,7 @@ impl<T, B: Borrow<Inner<T>> + Unpin> InnerListener<T, B> {
             (parker, Task::Unparker(unparker))
         }
 
-        std::thread_local! {
+        crate::sync::thread_local! {
             /// Cached thread-local parker/unparker pair.
             static PARKER: (Parker, Task) = parker_and_task();
         }
@@ -1371,6 +1371,8 @@ mod sync {
 
     #[cfg(all(feature = "std", not(loom)))]
     pub(super) use std::sync::{Mutex, MutexGuard};
+    #[cfg(all(feature = "std", not(target_family = "wasm"), not(loom)))]
+    pub(super) use std::thread_local;
 
     pub(super) trait WithMut {
         type Output;
@@ -1434,8 +1436,8 @@ mod sync {
 #[cfg(loom)]
 /// Synchronization primitive implementation.
 mod sync {
-    pub(super) use loom::cell;
     pub(super) use loom::sync::{atomic, Arc, Mutex, MutexGuard};
+    pub(super) use loom::{cell, thread_local};
 }
 
 fn __test_send_and_sync() {
