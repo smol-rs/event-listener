@@ -111,7 +111,7 @@ use sync::Arc;
 #[cfg(not(loom))]
 use sync::WithMut;
 
-use notify::{Internal, NotificationPrivate};
+use notify::NotificationPrivate;
 pub use notify::{IntoNotification, Notification};
 
 /// Inner state of [`Event`].
@@ -437,21 +437,8 @@ impl<T> Event<T> {
         // Make sure the notification comes after whatever triggered it.
         notify.fence(notify::Internal::new());
 
-        if let Some(inner) = self.try_inner() {
-            let limit = if notify.is_additional(Internal::new()) {
-                usize::MAX
-            } else {
-                notify.count(Internal::new())
-            };
-
-            // Notify if there is at least one unnotified listener and the number of notified
-            // listeners is less than `limit`.
-            if inner.needs_notification(limit) {
-                return inner.notify(notify);
-            }
-        }
-
-        0
+        let inner = unsafe { &*self.inner() };
+        inner.notify(notify)
     }
 
     /// Return a reference to the inner state if it has been initialized.

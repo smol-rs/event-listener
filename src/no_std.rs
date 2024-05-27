@@ -45,11 +45,6 @@ impl<T> crate::Inner<T> {
         drop(self.try_lock());
     }
 
-    pub(crate) fn needs_notification(&self, _limit: usize) -> bool {
-        // TODO: Figure out a stable way to do this optimization.
-        true
-    }
-
     /// Add a new listener to the list.
     ///
     /// Does nothing if the list is already registered.
