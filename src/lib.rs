@@ -1371,7 +1371,7 @@ mod sync {
 
     #[cfg(all(feature = "std", not(loom)))]
     pub(super) use std::sync::{Mutex, MutexGuard};
-    #[cfg(all(feature = "std", not(loom)))]
+    #[cfg(all(feature = "std", not(target_family = "wasm"), not(loom)))]
     pub(super) use std::thread_local;
 
     pub(super) trait WithMut {
