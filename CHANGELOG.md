@@ -1,3 +1,11 @@
+# Version 5.3.1
+
+- Disable some optimizations that, in rare conditions, can cause race conditions
+  causing notifications to be dropped. (#139)
+- Ensure the portable-atomic feature is set properly. (#134)
+- Update `portable-atomic-util` to v0.2.0. (#132)
+- Document the std feature. (#134)
+
 # Version 5.3.0
 
 - Add a `loom` implementation. This feature is unstable and is not semver-supported. (#126)
