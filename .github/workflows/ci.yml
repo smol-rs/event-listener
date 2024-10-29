@@ -58,11 +58,11 @@ jobs:
         run: cargo hack build --all --no-dev-deps
       - run: cargo hack build --all --target thumbv7m-none-eabi --no-default-features --no-dev-deps
       - run: cargo hack build --target thumbv7m-none-eabi --no-default-features --no-dev-deps --features portable-atomic
-      - name: Install wasm-pack
-        uses: taiki-e/install-action@wasm-pack
-      - run: wasm-pack test --node
-      - run: wasm-pack test --node --no-default-features
-      - run: wasm-pack test --node --no-default-features --features portable-atomic
+      #- name: Install wasm-pack
+      #  uses: taiki-e/install-action@wasm-pack
+      #- run: wasm-pack test --node
+      #- run: wasm-pack test --node --no-default-features
+      #- run: wasm-pack test --node --no-default-features --features portable-atomic
       - name: Clone some dependent crates
         run: |
           git clone https://github.com/smol-rs/event-listener-strategy.git

@@ -63,7 +63,7 @@
 //! # Features
 //!
 //! - The `std` feature (enabled by default) enables the use of the Rust standard library. Disable it for `no_std`
-//! support
+//!   support
 //!
 //! - The `portable-atomic` feature enables the use of the [`portable-atomic`] crate to provide
 //!   atomic operations on platforms that don't support them.
