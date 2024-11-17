@@ -29,6 +29,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [dependencies]
 concurrent-queue = { version = "2.4.0", default-features = false }
+critical-section = { version = "1.2.0", default-features = false, optional = true }
 pin-project-lite = "0.2.12"
 portable-atomic-util = { version = "0.2.0", default-features = false, optional = true, features = ["alloc"] }
 
@@ -45,6 +46,7 @@ default-features = false
 optional = true
 
 [dev-dependencies]
+critical-section = { version = "1.2.0", features = ["std"] }
 futures-lite = "2.0.0"
 try-lock = "0.2.5"
 waker-fn = "1"

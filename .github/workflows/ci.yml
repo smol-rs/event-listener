@@ -58,6 +58,7 @@ jobs:
         run: cargo hack build --all --no-dev-deps
       - run: cargo hack build --all --target thumbv7m-none-eabi --no-default-features --no-dev-deps
       - run: cargo hack build --target thumbv7m-none-eabi --no-default-features --no-dev-deps --features portable-atomic
+      - run: cargo hack build --target thumbv7m-none-eabi --no-default-features --no-dev-deps --features critical-section
       #- name: Install wasm-pack
       #  uses: taiki-e/install-action@wasm-pack
       #- run: wasm-pack test --node
@@ -93,6 +94,7 @@ jobs:
         uses: taiki-e/install-action@cargo-hack
       - run: cargo hack build --all --rust-version
       - run: cargo hack build --all --no-default-features --rust-version
+      - run: cargo hack build --all --no-default-features --rust-version --features critical-section
 
   clippy:
     runs-on: ubuntu-latest
