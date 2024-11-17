@@ -9,7 +9,7 @@
 //! atomic queue if the lock is contended. Benchmarks show that this is about 20% slower than the std
 //! implementation, but still much faster than using a queue.
 
-#[path = "no_std/node.rs"]
+#[path = "slab/node.rs"]
 mod node;
 
 use node::{Node, NothingProducer, TaskWaiting};
