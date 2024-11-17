@@ -85,10 +85,13 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std as alloc;
 
-#[cfg_attr(any(feature = "std", feature = "critical-section"), path = "std.rs")]
+#[cfg_attr(
+    any(feature = "std", feature = "critical-section"),
+    path = "intrusive.rs"
+)]
 #[cfg_attr(
     not(any(feature = "std", feature = "critical-section")),
-    path = "no_std.rs"
+    path = "slab.rs"
 )]
 mod sys;
 

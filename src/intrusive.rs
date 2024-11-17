@@ -1,4 +1,4 @@
-//! libstd-based implementation of `event-listener`.
+//! Intrusive linked list-based implementation of `event-listener`.
 //!
 //! This implementation crates an intrusive linked list of listeners. This list
 //! is secured using either a libstd mutex or a critical section.
@@ -362,7 +362,7 @@ impl<T> DerefMut for ListLock<'_, '_, T> {
 #[cfg(all(feature = "std", not(feature = "critical-section")))]
 impl<T> Drop for ListLock<'_, '_, T> {
     fn drop(&mut self) {
-        update_notified(&self.inner.notified, &mut self.lock);
+        update_notified(&self.inner.notified, &self.lock);
     }
 }
 
