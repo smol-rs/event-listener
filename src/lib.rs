@@ -85,8 +85,11 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std as alloc;
 
-#[cfg_attr(feature = "std", path = "std.rs")]
-#[cfg_attr(not(feature = "std"), path = "no_std.rs")]
+#[cfg_attr(any(feature = "std", feature = "critical-section"), path = "std.rs")]
+#[cfg_attr(
+    not(any(feature = "std", feature = "critical-section")),
+    path = "no_std.rs"
+)]
 mod sys;
 
 mod notify;
@@ -1359,7 +1362,7 @@ mod sync {
     #[cfg(feature = "portable-atomic")]
     pub(super) use portable_atomic_util::Arc;
 
-    #[cfg(all(feature = "std", not(loom)))]
+    #[cfg(all(feature = "std", not(feature = "critical-section"), not(loom)))]
     pub(super) use std::sync::{Mutex, MutexGuard};
     #[cfg(all(feature = "std", not(target_family = "wasm"), not(loom)))]
     pub(super) use std::thread_local;
