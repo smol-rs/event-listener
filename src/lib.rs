@@ -63,11 +63,15 @@
 //! # Features
 //!
 //! - The `std` feature (enabled by default) enables the use of the Rust standard library. Disable it for `no_std`
-//!   support
+//!   support.
+//!
+//! - The `critical-section` feature enables usage of the [`critical-section`] crate to enable a
+//!   more efficient implementation of `event-listener` for `no_std` platforms.
 //!
 //! - The `portable-atomic` feature enables the use of the [`portable-atomic`] crate to provide
 //!   atomic operations on platforms that don't support them.
 //!
+//! [`critical-section`]: https://crates.io/crates/critical-section
 //! [`portable-atomic`]: https://crates.io/crates/portable-atomic
 
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -1365,6 +1369,7 @@ mod sync {
     #[cfg(feature = "portable-atomic")]
     pub(super) use portable_atomic_util::Arc;
 
+    #[allow(unused)]
     #[cfg(all(feature = "std", not(feature = "critical-section"), not(loom)))]
     pub(super) use std::sync::{Mutex, MutexGuard};
     #[cfg(all(feature = "std", not(target_family = "wasm"), not(loom)))]
