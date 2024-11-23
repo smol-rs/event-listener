@@ -18,14 +18,13 @@ use core::mem;
 use core::pin::Pin;
 use core::ptr::NonNull;
 
-#[cfg(all(feature = "std", not(feature = "critical-section")))]
-use crate::sync::{Mutex, MutexGuard};
-#[cfg(feature = "critical-section")]
-use critical_section::Mutex;
-
 pub(super) struct List<T>(
-    #[cfg(all(feature = "std", not(feature = "critical-section")))] Mutex<Inner<T>>,
-    #[cfg(feature = "critical-section")] Mutex<RefCell<Inner<T>>>,
+    /// libstd-based implementation uses a normal Muetx to secure the data.
+    #[cfg(all(feature = "std", not(feature = "critical-section")))]
+    crate::sync::Mutex<Inner<T>>,
+    /// Critical-section-based implementation uses a CS cell that wraps a RefCell.
+    #[cfg(feature = "critical-section")]
+    critical_section::Mutex<RefCell<Inner<T>>>,
 );
 
 struct Inner<T> {
@@ -57,9 +56,12 @@ impl<T> List<T> {
         };
 
         #[cfg(feature = "critical-section")]
-        let inner = RefCell::new(inner);
+        {
+            Self(critical_section::Mutex::new(RefCell::new(inner)))
+        }
 
-        Self(Mutex::new(inner))
+        #[cfg(not(feature = "critical-section"))]
+        Self(crate::sync::Mutex::new(inner))
     }
 
     /// Get the total number of listeners without blocking.
@@ -71,7 +73,7 @@ impl<T> List<T> {
     /// Get the total number of listeners without blocking.
     #[cfg(feature = "critical-section")]
     pub(crate) fn try_total_listeners(&self) -> Option<usize> {
-        Some(critical_section::with(|cs| self.0.borrow(cs).borrow().len))
+        Some(self.total_listeners())
     }
 
     /// Get the total number of listeners with blocking.
@@ -81,16 +83,45 @@ impl<T> List<T> {
     }
 
     /// Get the total number of listeners with blocking.
-    #[cfg(all(feature = "std", feature = "critical-section"))]
+    #[cfg(feature = "critical-section")]
+    #[allow(unused)]
     pub(crate) fn total_listeners(&self) -> usize {
-        self.try_total_listeners().unwrap()
+        critical_section::with(|cs| self.0.borrow(cs).borrow().len)
     }
 }
 
 impl<T> crate::Inner<T> {
     #[cfg(all(feature = "std", not(feature = "critical-section")))]
     fn with_inner<R>(&self, f: impl FnOnce(&mut Inner<T>) -> R) -> R {
-        let mut list = self.lock();
+        struct ListLock<'a, 'b, T> {
+            lock: crate::sync::MutexGuard<'a, Inner<T>>,
+            inner: &'b crate::Inner<T>,
+        }
+
+        impl<T> Deref for ListLock<'_, '_, T> {
+            type Target = Inner<T>;
+
+            fn deref(&self) -> &Self::Target {
+                &self.lock
+            }
+        }
+
+        impl<T> DerefMut for ListLock<'_, '_, T> {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.lock
+            }
+        }
+
+        impl<T> Drop for ListLock<'_, '_, T> {
+            fn drop(&mut self) {
+                update_notified(&self.inner.notified, &self.lock);
+            }
+        }
+
+        let mut list = ListLock {
+            inner: self,
+            lock: self.list.0.lock().unwrap_or_else(|e| e.into_inner()),
+        };
         f(&mut list)
     }
 
@@ -116,14 +147,6 @@ impl<T> crate::Inner<T> {
 
             f(wrapper.list)
         })
-    }
-
-    #[cfg(all(feature = "std", not(feature = "critical-section")))]
-    fn lock(&self) -> ListLock<'_, '_, T> {
-        ListLock {
-            inner: self,
-            lock: self.list.0.lock().unwrap_or_else(|e| e.into_inner()),
-        }
     }
 
     /// Add a new listener to the list.
@@ -334,35 +357,6 @@ impl<T> Inner<T> {
         }
 
         original_count - n
-    }
-}
-
-#[cfg(all(feature = "std", not(feature = "critical-section")))]
-struct ListLock<'a, 'b, T> {
-    lock: MutexGuard<'a, Inner<T>>,
-    inner: &'b crate::Inner<T>,
-}
-
-#[cfg(all(feature = "std", not(feature = "critical-section")))]
-impl<T> Deref for ListLock<'_, '_, T> {
-    type Target = Inner<T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.lock
-    }
-}
-
-#[cfg(all(feature = "std", not(feature = "critical-section")))]
-impl<T> DerefMut for ListLock<'_, '_, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.lock
-    }
-}
-
-#[cfg(all(feature = "std", not(feature = "critical-section")))]
-impl<T> Drop for ListLock<'_, '_, T> {
-    fn drop(&mut self) {
-        update_notified(&self.inner.notified, &self.lock);
     }
 }
 
