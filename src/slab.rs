@@ -18,7 +18,7 @@ use crate::notify::{GenericNotify, Internal, Notification};
 use crate::sync::atomic::{AtomicBool, Ordering};
 use crate::sync::cell::{Cell, ConstPtr, UnsafeCell};
 use crate::sync::Arc;
-use crate::{RegisterResult, State, Task, TaskRef};
+use crate::{QueueStrategy, RegisterResult, State, Task, TaskRef};
 
 use core::fmt;
 use core::marker::PhantomData;
@@ -229,7 +229,12 @@ pub(crate) struct List<T> {
 }
 
 impl<T> List<T> {
-    pub(super) fn new() -> List<T> {
+    pub(super) fn new(strategy: QueueStrategy) -> List<T> {
+        debug_assert!(
+            strategy == QueueStrategy::Fifo,
+            "Slab list only supports FIFO strategy"
+        );
+
         List {
             inner: Mutex::new(ListenerSlab::new()),
             queue: concurrent_queue::ConcurrentQueue::unbounded(),
@@ -1362,7 +1367,7 @@ mod tests {
 
     #[test]
     fn uncontended_inner() {
-        let inner = crate::Inner::new();
+        let inner = crate::Inner::new(QueueStrategy::Fifo);
 
         // Register two listeners.
         let (mut listener1, mut listener2, mut listener3) = (None, None, None);

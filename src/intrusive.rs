@@ -6,7 +6,7 @@
 use crate::notify::{GenericNotify, Internal, Notification};
 use crate::sync::atomic::Ordering;
 use crate::sync::cell::{Cell, UnsafeCell};
-use crate::{RegisterResult, State, TaskRef};
+use crate::{QueueStrategy, RegisterResult, State, TaskRef};
 
 #[cfg(feature = "critical-section")]
 use core::cell::RefCell;
@@ -42,17 +42,21 @@ struct Inner<T> {
 
     /// The number of notified listeners.
     notified: usize,
+
+    /// Strategy by which the list is organized.
+    strategy: QueueStrategy,
 }
 
 impl<T> List<T> {
     /// Create a new, empty event listener list.
-    pub(super) fn new() -> Self {
+    pub(super) fn new(strategy: QueueStrategy) -> Self {
         let inner = Inner {
             head: None,
             tail: None,
             next: None,
             len: 0,
             notified: 0,
+            strategy,
         };
 
         #[cfg(feature = "critical-section")]
@@ -149,39 +153,9 @@ impl<T> crate::Inner<T> {
         })
     }
 
-    /// Add a new listener to the list.
-    pub(crate) fn insert(&self, mut listener: Pin<&mut Option<Listener<T>>>) {
-        self.with_inner(|inner| {
-            listener.as_mut().set(Some(Listener {
-                link: UnsafeCell::new(Link {
-                    state: Cell::new(State::Created),
-                    prev: Cell::new(inner.tail),
-                    next: Cell::new(None),
-                }),
-                _pin: PhantomPinned,
-            }));
-            let listener = listener.as_pin_mut().unwrap();
-
-            {
-                let entry_guard = listener.link.get();
-                // SAFETY: We are locked, so we can access the inner `link`.
-                let entry = unsafe { entry_guard.deref() };
-
-                // Replace the tail with the new entry.
-                match mem::replace(&mut inner.tail, Some(entry.into())) {
-                    None => inner.head = Some(entry.into()),
-                    Some(t) => unsafe { t.as_ref().next.set(Some(entry.into())) },
-                };
-            }
-
-            // If there are no unnotified entries, this is the first one.
-            if inner.next.is_none() {
-                inner.next = inner.tail;
-            }
-
-            // Bump the entry count.
-            inner.len += 1;
-        });
+    /// Adds a listener to the list.
+    pub(crate) fn insert(&self, listener: Pin<&mut Option<Listener<T>>>) {
+        self.with_inner(|inner| inner.insert(listener))
     }
 
     /// Remove a listener from the list.
@@ -248,6 +222,53 @@ impl<T> crate::Inner<T> {
 }
 
 impl<T> Inner<T> {
+    fn insert(&mut self, mut listener: Pin<&mut Option<Listener<T>>>) {
+        use QueueStrategy::{Fifo, Lifo};
+
+        listener.as_mut().set(Some(Listener {
+            link: UnsafeCell::new(Link {
+                state: Cell::new(State::Created),
+                prev: Cell::new(self.tail.filter(|_| self.strategy == Fifo)),
+                next: Cell::new(self.head.filter(|_| self.strategy == Lifo)),
+            }),
+            _pin: PhantomPinned,
+        }));
+        let listener = listener.as_pin_mut().unwrap();
+
+        {
+            let entry_guard = listener.link.get();
+            // SAFETY: We are locked, so we can access the inner `link`.
+            let entry = unsafe { entry_guard.deref() };
+
+            // Replace the head or tail with the new entry.
+            let replacing = match self.strategy {
+                Lifo => &mut self.head,
+                Fifo => &mut self.tail,
+            };
+
+            match mem::replace(replacing, Some(entry.into())) {
+                None => *replacing = Some(entry.into()),
+                Some(t) if self.strategy == Lifo => unsafe {
+                    t.as_ref().prev.set(Some(entry.into()))
+                },
+                Some(t) if self.strategy == Fifo => unsafe {
+                    t.as_ref().next.set(Some(entry.into()))
+                },
+                Some(_) => unimplemented!("unimplemented queue strategy"),
+            };
+        }
+
+        // If there are no unnotified entries, or if using LIFO strategy, this is the first one.
+        if self.strategy == Lifo {
+            self.next = self.head;
+        } else if self.next.is_none() {
+            self.next = self.tail;
+        }
+
+        // Bump the entry count.
+        self.len += 1;
+    }
+
     fn remove(
         &mut self,
         mut listener: Pin<&mut Option<Listener<T>>>,
@@ -413,7 +434,7 @@ mod tests {
 
     #[test]
     fn insert() {
-        let inner = crate::Inner::new();
+        let inner = crate::Inner::new(QueueStrategy::Fifo);
         make_listeners!(listen1, listen2, listen3);
 
         // Register the listeners.
@@ -434,7 +455,7 @@ mod tests {
 
     #[test]
     fn drop_non_notified() {
-        let inner = crate::Inner::new();
+        let inner = crate::Inner::new(QueueStrategy::Fifo);
         make_listeners!(listen1, listen2, listen3);
 
         // Register the listeners.
