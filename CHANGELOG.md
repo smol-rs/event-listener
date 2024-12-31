@@ -1,3 +1,8 @@
+# Version 5.4.0
+
+- Add a `no_std` implementation based on the `critical-section` crate, enabled
+  via the feature of the same name. (#148)
+
 # Version 5.3.1
 
 - Disable some optimizations that, in rare conditions, can cause race conditions
