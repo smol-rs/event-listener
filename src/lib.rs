@@ -765,7 +765,7 @@ pub trait Listener<T = ()>: Future<Output = T> + __sealed::Sealed {
 
     /// Blocks until a notification is received or a timeout is reached.
     ///
-    /// Returns `true` if a notification was received.
+    /// Returns `Some` if a notification was received.
     ///
     /// # Examples
     ///
