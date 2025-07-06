@@ -14,6 +14,7 @@
 //! Wait until another thread sets a boolean flag:
 //!
 //! ```
+//! # #[cfg(not(target_family = "wasm"))] { // Listener::wait is unavailable on WASM
 //! use std::sync::atomic::{AtomicBool, Ordering};
 //! use std::sync::Arc;
 //! use std::thread;
@@ -58,6 +59,7 @@
 //!     // Wait for a notification and continue the loop.
 //!     listener.wait();
 //! }
+//! # }
 //! ```
 //!
 //! # Features
@@ -990,6 +992,7 @@ forward_impl_to_listener! { T => EventListener<T> }
 /// of [`EventListener`].
 ///
 /// ```
+/// # #[cfg(not(target_family = "wasm"))] { // Listener::wait is unavailable on WASM
 /// use std::sync::atomic::{AtomicBool, Ordering};
 /// use std::sync::Arc;
 /// use std::thread;
@@ -1035,6 +1038,7 @@ forward_impl_to_listener! { T => EventListener<T> }
 ///     // Wait for a notification and continue the loop.
 ///     listener.wait();
 /// }
+/// # }
 /// ```
 #[macro_export]
 macro_rules! listener {
