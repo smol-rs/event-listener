@@ -168,7 +168,7 @@ impl<T> crate::Inner<T> {
                 let entry = unsafe { entry_guard.deref() };
 
                 // Replace the tail with the new entry.
-                match mem::replace(&mut inner.tail, Some(entry.into())) {
+                match inner.tail.replace(entry.into()) {
                     None => inner.head = Some(entry.into()),
                     Some(t) => unsafe { t.as_ref().next.set(Some(entry.into())) },
                 };
