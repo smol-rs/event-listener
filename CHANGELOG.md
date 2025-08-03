@@ -1,3 +1,7 @@
+# Version 5.4.1
+
+- Fix a copy-paste error in `wait_timeout` docs (#152)
+
 # Version 5.4.0
 
 - Add a `no_std` implementation based on the `critical-section` crate, enabled
