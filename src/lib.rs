@@ -129,6 +129,16 @@ use sync::WithMut;
 use notify::NotificationPrivate;
 pub use notify::{IntoNotification, Notification};
 
+/// Queuing strategy for listeners.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum QueueStrategy {
+    /// First-in-first-out listeners are added to the back of the list.
+    Fifo,
+
+    /// Last-in-first-out listeners are added to the front of the list.
+    Lifo,
+}
+
 /// Inner state of [`Event`].
 struct Inner<T> {
     /// The number of notified entries, or `usize::MAX` if all of them have been notified.
@@ -145,10 +155,10 @@ struct Inner<T> {
 }
 
 impl<T> Inner<T> {
-    fn new() -> Self {
+    fn new(queue_strategy: QueueStrategy) -> Self {
         Self {
             notified: AtomicUsize::new(usize::MAX),
-            list: sys::List::new(),
+            list: sys::List::new(queue_strategy),
         }
     }
 }
@@ -179,6 +189,11 @@ pub struct Event<T = ()> {
     /// is an `Arc<Inner>` so it's important to keep in mind that it contributes to the [`Arc`]'s
     /// reference count.
     inner: AtomicPtr<Inner<T>>,
+
+    /// Queuing strategy.
+    ///
+    /// Listeners waiting for notification will be arranged according to the strategy.
+    queue_strategy: QueueStrategy,
 }
 
 unsafe impl<T: Send> Send for Event<T> {}
@@ -240,6 +255,7 @@ impl<T> Event<T> {
     pub const fn with_tag() -> Self {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
+            queue_strategy: QueueStrategy::Fifo,
         }
     }
     #[cfg(all(feature = "std", loom))]
@@ -247,6 +263,7 @@ impl<T> Event<T> {
     pub fn with_tag() -> Self {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
+            queue_strategy: QueueStrategy::Fifo,
         }
     }
 
@@ -473,7 +490,7 @@ impl<T> Event<T> {
         // If this is the first use, initialize the state.
         if inner.is_null() {
             // Allocate the state on the heap.
-            let new = Arc::new(Inner::<T>::new());
+            let new = Arc::new(Inner::<T>::new(self.queue_strategy));
 
             // Convert the state to a raw pointer.
             let new = Arc::into_raw(new) as *mut Inner<T>;
@@ -558,16 +575,39 @@ impl Event<()> {
     #[inline]
     #[cfg(not(loom))]
     pub const fn new() -> Self {
-        Self {
-            inner: AtomicPtr::new(ptr::null_mut()),
-        }
+        Self::new_with_queue_strategy(QueueStrategy::Fifo)
     }
 
     #[inline]
     #[cfg(loom)]
     pub fn new() -> Self {
+        Self::new_with_queue_strategy(QueueStrategy::Fifo)
+    }
+
+    /// Creates a new [`Event`] with specific queue strategy.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use event_listener::{Event, QueueStrategy};
+    ///
+    /// let event = Event::new_with_queue_strategy(QueueStrategy::Fifo);
+    /// ```
+    #[inline]
+    #[cfg(not(loom))]
+    pub const fn new_with_queue_strategy(queue_strategy: QueueStrategy) -> Self {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
+            queue_strategy,
+        }
+    }
+
+    #[inline]
+    #[cfg(loom)]
+    pub fn new_with_queue_strategy(queue_strategy: QueueStrategy) -> Self {
+        Self {
+            inner: AtomicPtr::new(ptr::null_mut()),
+            queue_strategy,
         }
     }
 
