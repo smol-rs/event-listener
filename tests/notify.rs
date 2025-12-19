@@ -3,7 +3,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::Context;
 
-use event_listener::{Event, EventListener};
+use event_listener::{Event, EventListener, QueueStrategy};
 use waker_fn::waker_fn;
 
 #[cfg(target_family = "wasm")]
@@ -17,8 +17,17 @@ fn is_notified(listener: &mut EventListener) -> bool {
 }
 
 #[test]
-fn notify() {
-    let event = Event::new();
+fn notify_fifo() {
+    notify(QueueStrategy::Fifo)
+}
+
+#[test]
+fn notify_lifo() {
+    notify(QueueStrategy::Lifo)
+}
+
+fn notify(queue_strategy: QueueStrategy) {
+    let event = Event::new_with_queue_strategy(queue_strategy);
 
     let mut l1 = event.listen();
     let mut l2 = event.listen();
@@ -31,14 +40,32 @@ fn notify() {
     assert_eq!(event.notify(2), 2);
     assert_eq!(event.notify(1), 0);
 
-    assert!(is_notified(&mut l1));
-    assert!(is_notified(&mut l2));
-    assert!(!is_notified(&mut l3));
+    match queue_strategy {
+        QueueStrategy::Fifo => {
+            assert!(is_notified(&mut l1));
+            assert!(is_notified(&mut l2));
+            assert!(!is_notified(&mut l3));
+        }
+        QueueStrategy::Lifo => {
+            assert!(is_notified(&mut l3));
+            assert!(is_notified(&mut l2));
+            assert!(!is_notified(&mut l1));
+        }
+    }
 }
 
 #[test]
-fn notify_additional() {
-    let event = Event::new();
+fn notify_additional_fifo() {
+    notify_additional(QueueStrategy::Fifo)
+}
+
+#[test]
+fn notify_additional_lifo() {
+    notify_additional(QueueStrategy::Lifo)
+}
+
+fn notify_additional(queue_strategy: QueueStrategy) {
+    let event = Event::new_with_queue_strategy(queue_strategy);
 
     let mut l1 = event.listen();
     let mut l2 = event.listen();
@@ -48,14 +75,32 @@ fn notify_additional() {
     assert_eq!(event.notify(1), 0);
     assert_eq!(event.notify_additional(1), 1);
 
-    assert!(is_notified(&mut l1));
-    assert!(is_notified(&mut l2));
-    assert!(!is_notified(&mut l3));
+    match queue_strategy {
+        QueueStrategy::Fifo => {
+            assert!(is_notified(&mut l1));
+            assert!(is_notified(&mut l2));
+            assert!(!is_notified(&mut l3));
+        }
+        QueueStrategy::Lifo => {
+            assert!(is_notified(&mut l3));
+            assert!(is_notified(&mut l2));
+            assert!(!is_notified(&mut l1));
+        }
+    }
 }
 
 #[test]
-fn notify_one() {
-    let event = Event::new();
+fn notify_one_fifo() {
+    notify_one(QueueStrategy::Fifo)
+}
+
+#[test]
+fn notify_one_lifo() {
+    notify_one(QueueStrategy::Lifo)
+}
+
+fn notify_one(queue_strategy: QueueStrategy) {
+    let event = Event::new_with_queue_strategy(queue_strategy);
 
     let mut l1 = event.listen();
     let mut l2 = event.listen();
@@ -64,16 +109,36 @@ fn notify_one() {
     assert!(!is_notified(&mut l2));
 
     assert_eq!(event.notify(1), 1);
-    assert!(is_notified(&mut l1));
-    assert!(!is_notified(&mut l2));
+    match queue_strategy {
+        QueueStrategy::Fifo => {
+            assert!(is_notified(&mut l1));
+            assert!(!is_notified(&mut l2));
+        }
+        QueueStrategy::Lifo => {
+            assert!(is_notified(&mut l2));
+            assert!(!is_notified(&mut l1));
+        }
+    }
 
     assert_eq!(event.notify(1), 1);
-    assert!(is_notified(&mut l2));
+    match queue_strategy {
+        QueueStrategy::Fifo => assert!(is_notified(&mut l2)),
+        QueueStrategy::Lifo => assert!(is_notified(&mut l1)),
+    }
 }
 
 #[test]
-fn notify_all() {
-    let event = Event::new();
+fn notify_all_fifo() {
+    notify_all(QueueStrategy::Fifo)
+}
+
+#[test]
+fn notify_all_lifo() {
+    notify_all(QueueStrategy::Lifo)
+}
+
+fn notify_all(queue_strategy: QueueStrategy) {
+    let event = Event::new_with_queue_strategy(queue_strategy);
 
     let mut l1 = event.listen();
     let mut l2 = event.listen();
@@ -87,8 +152,8 @@ fn notify_all() {
 }
 
 #[test]
-fn drop_notified() {
-    let event = Event::new();
+fn drop_notified_fifo() {
+    let event = Event::new_with_queue_strategy(QueueStrategy::Fifo);
 
     let l1 = event.listen();
     let mut l2 = event.listen();
@@ -101,8 +166,22 @@ fn drop_notified() {
 }
 
 #[test]
-fn drop_notified2() {
-    let event = Event::new();
+fn drop_notified_lifo() {
+    let event = Event::new_with_queue_strategy(QueueStrategy::Lifo);
+
+    let mut l1 = event.listen();
+    let mut l2 = event.listen();
+    let l3 = event.listen();
+
+    assert_eq!(event.notify(1), 1);
+    drop(l3);
+    assert!(is_notified(&mut l2));
+    assert!(!is_notified(&mut l1));
+}
+
+#[test]
+fn drop_notified2_fifo() {
+    let event = Event::new_with_queue_strategy(QueueStrategy::Fifo);
 
     let l1 = event.listen();
     let mut l2 = event.listen();
@@ -115,8 +194,22 @@ fn drop_notified2() {
 }
 
 #[test]
-fn drop_notified_additional() {
-    let event = Event::new();
+fn drop_notified2_lifo() {
+    let event = Event::new_with_queue_strategy(QueueStrategy::Lifo);
+
+    let mut l1 = event.listen();
+    let mut l2 = event.listen();
+    let l3 = event.listen();
+
+    assert_eq!(event.notify(2), 2);
+    drop(l3);
+    assert!(is_notified(&mut l2));
+    assert!(!is_notified(&mut l1));
+}
+
+#[test]
+fn drop_notified_additional_fifo() {
+    let event = Event::new_with_queue_strategy(QueueStrategy::Fifo);
 
     let l1 = event.listen();
     let mut l2 = event.listen();
@@ -132,8 +225,25 @@ fn drop_notified_additional() {
 }
 
 #[test]
-fn drop_non_notified() {
-    let event = Event::new();
+fn drop_notified_additional_lifo() {
+    let event = Event::new_with_queue_strategy(QueueStrategy::Lifo);
+
+    let mut l1 = event.listen();
+    let mut l2 = event.listen();
+    let mut l3 = event.listen();
+    let l4 = event.listen();
+
+    assert_eq!(event.notify_additional(1), 1);
+    assert_eq!(event.notify(2), 1);
+    drop(l4);
+    assert!(is_notified(&mut l3));
+    assert!(is_notified(&mut l2));
+    assert!(!is_notified(&mut l1));
+}
+
+#[test]
+fn drop_non_notified_fifo() {
+    let event = Event::new_with_queue_strategy(QueueStrategy::Fifo);
 
     let mut l1 = event.listen();
     let mut l2 = event.listen();
@@ -146,8 +256,31 @@ fn drop_non_notified() {
 }
 
 #[test]
-fn notify_all_fair() {
-    let event = Event::new();
+fn drop_non_notified_lifo() {
+    let event = Event::new_with_queue_strategy(QueueStrategy::Lifo);
+
+    let l1 = event.listen();
+    let mut l2 = event.listen();
+    let mut l3 = event.listen();
+
+    assert_eq!(event.notify(1), 1);
+    drop(l1);
+    assert!(is_notified(&mut l3));
+    assert!(!is_notified(&mut l2));
+}
+
+#[test]
+fn notify_all_fair_fifo() {
+    notify_all_fair(QueueStrategy::Fifo)
+}
+
+#[test]
+fn notify_all_fair_lifo() {
+    notify_all_fair(QueueStrategy::Lifo)
+}
+
+fn notify_all_fair(queue_strategy: QueueStrategy) {
+    let event = Event::new_with_queue_strategy(queue_strategy);
     let v = Arc::new(Mutex::new(vec![]));
 
     let mut l1 = event.listen();
@@ -178,7 +311,11 @@ fn notify_all_fair() {
         .is_pending());
 
     assert_eq!(event.notify(usize::MAX), 3);
-    assert_eq!(&*v.lock().unwrap(), &[1, 2, 3]);
+
+    match queue_strategy {
+        QueueStrategy::Fifo => assert_eq!(&*v.lock().unwrap(), &[1, 2, 3]),
+        QueueStrategy::Lifo => assert_eq!(&*v.lock().unwrap(), &[3, 2, 1]),
+    }
 
     assert!(Pin::new(&mut l1)
         .poll(&mut Context::from_waker(&waker1))
