@@ -61,6 +61,7 @@ jobs:
       - run: cargo test --all --release
       - run: cargo test --no-default-features --tests
       - run: cargo test --no-default-features --tests --release
+      - run: cargo test --no-default-features --features critical-section
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - run: rustup target add thumbv7m-none-eabi
@@ -126,6 +127,7 @@ jobs:
       - run: cargo miri test --all
       - run: cargo miri test --no-default-features --tests
       - run: cargo miri test --no-default-features --features portable-atomic --tests
+      - run: cargo miri test --no-default-features --features critical-section --tests
       - name: Clone some dependent crates
         run: |
           git clone https://github.com/smol-rs/event-listener-strategy.git

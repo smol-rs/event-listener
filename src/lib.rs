@@ -13,7 +13,8 @@
 //!
 //! Wait until another thread sets a boolean flag:
 //!
-//! ```
+#![cfg_attr(feature = "std", doc = "```")]
+#![cfg_attr(not(feature = "std"), doc = "```no_compile")]
 //! # #[cfg(not(target_family = "wasm"))] { // Listener::wait is unavailable on WASM
 //! use std::sync::atomic::{AtomicBool, Ordering};
 //! use std::sync::Arc;
@@ -73,8 +74,14 @@
 //! - The `portable-atomic` feature enables the use of the [`portable-atomic`] crate to provide
 //!   atomic operations on platforms that don't support them.
 //!
+//! In production environments, at least one of `std` or `critical-section` should be
+//! enabled. This ensures that the internal locking mechanism has a critical section of some
+//! kind to fall back on. Otherwise, it falls back to a spinlock implementation. This
+//! implementation is [dangerous] to rely on.
+//!
 //! [`critical-section`]: https://crates.io/crates/critical-section
 //! [`portable-atomic`]: https://crates.io/crates/portable-atomic
+//! [dangerous]: https://matklad.github.io/2020/01/02/spinlocks-considered-harmful.html
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![allow(clippy::multiple_bound_locations)] // This is a WONTFIX issue with pin-project-lite
@@ -91,14 +98,7 @@ extern crate alloc;
 #[cfg(feature = "std")]
 extern crate std as alloc;
 
-#[cfg_attr(
-    any(feature = "std", feature = "critical-section"),
-    path = "intrusive.rs"
-)]
-#[cfg_attr(
-    not(any(feature = "std", feature = "critical-section")),
-    path = "slab.rs"
-)]
+#[path = "intrusive.rs"]
 mod sys;
 
 mod notify;
@@ -991,7 +991,8 @@ forward_impl_to_listener! { T => EventListener<T> }
 /// Here is the top level example from this crate's documentation, but using [`listener`] instead
 /// of [`EventListener`].
 ///
-/// ```
+#[cfg_attr(feature = "std", doc = "```")]
+#[cfg_attr(not(feature = "std"), doc = "```no_compile")]
 /// # #[cfg(not(target_family = "wasm"))] { // Listener::wait is unavailable on WASM
 /// use std::sync::atomic::{AtomicBool, Ordering};
 /// use std::sync::Arc;

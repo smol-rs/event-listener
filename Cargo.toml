@@ -16,19 +16,17 @@ exclude = ["/.*"]
 
 [features]
 default = ["std"]
-std = ["concurrent-queue/std", "parking"]
+std = ["parking"]
 portable-atomic = [
   "portable-atomic-util",
   "portable_atomic_crate",
-  "concurrent-queue/portable-atomic",
 ]
-loom = ["concurrent-queue/loom", "parking?/loom", "dep:loom"]
+loom = ["parking?/loom", "dep:loom"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(loom)'] }
 
 [dependencies]
-concurrent-queue = { version = "2.4.0", default-features = false }
 critical-section = { version = "1.2.0", default-features = false, optional = true }
 pin-project-lite = "0.2.12"
 portable-atomic-util = { version = "0.2.0", default-features = false, optional = true, features = ["alloc"] }
