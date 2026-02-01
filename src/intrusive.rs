@@ -19,7 +19,7 @@ use core::pin::Pin;
 use core::ptr::NonNull;
 
 pub(super) struct List<T>(
-    /// libstd-based implementation uses a normal Muetx to secure the data.
+    /// libstd-based implementation uses a normal Mutex to secure the data.
     #[cfg(all(feature = "std", not(feature = "critical-section")))]
     crate::sync::Mutex<Inner<T>>,
     /// Critical-section-based implementation uses a CS cell that wraps a RefCell.
