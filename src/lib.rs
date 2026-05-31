@@ -1461,7 +1461,7 @@ fn __test_send_and_sync() {
 
 #[doc(hidden)]
 mod __sealed {
-    use super::{EventListener, __private::StackListener};
+    use super::{__private::StackListener, EventListener};
 
     pub trait Sealed {}
     impl<T> Sealed for EventListener<T> {}
