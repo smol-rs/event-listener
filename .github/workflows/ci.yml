@@ -50,7 +50,7 @@ jobs:
           - rust: nightly
             target: i686-unknown-linux-gnu
     steps:
-      - uses: actions/checkout@v4
+      - uses: taiki-e/checkout-action@v1
       - name: Install Rust
         run: rustup update ${{ matrix.rust }} && rustup default ${{ matrix.rust }}
       - name: Install cross-compilation tools
@@ -101,7 +101,7 @@ jobs:
   msrv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: taiki-e/checkout-action@v1
       - name: Install cargo-hack
         uses: taiki-e/install-action@cargo-hack
       - run: cargo hack build --all --rust-version
@@ -111,7 +111,7 @@ jobs:
   miri:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: taiki-e/checkout-action@v1
       - name: Install Rust
         run: rustup toolchain install nightly --component miri && rustup default nightly
       - run: |
@@ -146,7 +146,7 @@ jobs:
   loom:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: taiki-e/checkout-action@v1
       - name: Install Rust
         run: rustup update stable
       - name: Loom tests
