@@ -28,6 +28,8 @@ defaults:
 jobs:
   fmt:
     uses: smol-rs/.github/.github/workflows/fmt.yml@main
+  clippy:
+    uses: smol-rs/.github/.github/workflows/clippy.yml@main
   security_audit:
     uses: smol-rs/.github/.github/workflows/security_audit.yml@main
     permissions:
@@ -105,14 +107,6 @@ jobs:
       - run: cargo hack build --all --rust-version
       - run: cargo hack build --all --no-default-features --rust-version
       - run: cargo hack build --all --no-default-features --rust-version --features critical-section
-
-  clippy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        run: rustup update stable
-      - run: cargo clippy --all --all-features --all-targets
 
   miri:
     runs-on: ubuntu-latest
