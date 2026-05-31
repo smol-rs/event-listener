@@ -19,7 +19,6 @@
 //! use std::sync::Arc;
 //! use std::thread;
 //! use std::time::Duration;
-//! use std::usize;
 //! use event_listener::{Event, Listener};
 //!
 //! let flag = Arc::new(AtomicBool::new(false));
@@ -997,7 +996,6 @@ forward_impl_to_listener! { T => EventListener<T> }
 /// use std::sync::Arc;
 /// use std::thread;
 /// use std::time::Duration;
-/// use std::usize;
 /// use event_listener::{Event, listener, IntoNotification, Listener};
 ///
 /// let flag = Arc::new(AtomicBool::new(false));
