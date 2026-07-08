@@ -1496,8 +1496,8 @@ pub mod __private {
 
     impl<T> core::panic::UnwindSafe for StackSlot<'_, T> {}
     impl<T> core::panic::RefUnwindSafe for StackSlot<'_, T> {}
-    unsafe impl<T> Send for StackSlot<'_, T> {}
-    unsafe impl<T> Sync for StackSlot<'_, T> {}
+    unsafe impl<T: Send> Send for StackSlot<'_, T> {}
+    unsafe impl<T: Send> Sync for StackSlot<'_, T> {}
 
     impl<'ev, T> StackSlot<'ev, T> {
         /// Create a new `StackSlot` on the stack.
