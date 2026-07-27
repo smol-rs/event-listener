@@ -224,8 +224,10 @@ impl Default for Event {
 impl<T> Event<T> {
     /// Creates a new `Event` with a tag type.
     ///
-    /// Tagging cannot be implemented efficiently on `no_std`, so this is only available when the
-    /// `std` feature is enabled.
+    /// Tags are short messages passed to listeners when they are notified. They are [cloned]
+    /// or [generated] and sent to each listener under an internal lock, so the corresponding
+    /// operation should be small and cheap. If you don't need a tag, use [`Event::new()`]
+    /// instead.
     ///
     /// # Examples
     ///
@@ -234,14 +236,17 @@ impl<T> Event<T> {
     ///
     /// let event = Event::<usize>::with_tag();
     /// ```
-    #[cfg(all(feature = "std", not(loom)))]
+    ///
+    /// [cloned]: IntoNotification::tag
+    /// [generated]: IntoNotification::tag_with
+    #[cfg(not(loom))]
     #[inline]
     pub const fn with_tag() -> Self {
         Self {
             inner: AtomicPtr::new(ptr::null_mut()),
         }
     }
-    #[cfg(all(feature = "std", loom))]
+    #[cfg(loom)]
     #[inline]
     pub fn with_tag() -> Self {
         Self {
